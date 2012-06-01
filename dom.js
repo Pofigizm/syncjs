@@ -6,15 +6,89 @@
 
   var Element = window.Element || window.HTMLElement,
     Document = window.Document || window.HTMLDocument,
+    Node = window.Node,
     createElement = document.createElement.bind(document),
     element = createElement('div'),
     head = document.getElementsByTagName('head')[0],
     R_CAMEL_2_CSS = /[A-Z](?=\w)/g,
-    camel2css = function(input, w) {
-      return '-' + w.toLowerCase();
-    };
+    camel2css = function(w) {
+      return ('-' + w).toLowerCase();
+    },
+    NodeChildren = [
+      Element,
+      Document
+    ];
 
-  Sync.dom = {
+  if (!Node && document.attachEvent) {
+    window.Node = Node = function Node() {};
+    Node.prototype
+      = document.documentElement.appendChild(document.createElement('Node'));
+
+    document.documentElement.removeChild(Node.prototype);
+
+    [
+      'ELEMENT_NODE',
+      'ATTRIBUTE_NODE',
+      'TEXT_NODE',
+      'CDATA_SECTION_NODE',
+      'ENTITY_REFERENCE_NODE',
+      'ENTITY_NODE',
+      'PROCESSING_INSTRUCTION_NODE',
+      'COMMENT_NODE',
+      'DOCUMENT_NODE',
+      'DOCUMENT_TYPE_NODE',
+      'DOCUMENT_FRAGMENT_NODE',
+      'NOTATION_NODE'
+    ].forEach(function(name, value) {
+      Node[name] = Node.prototype[name] = value + 1;
+    });
+
+    Node.prototype.attachEvent('onpropertychange', function() {
+      var name,
+        desc;
+
+      if (window.event && (name = window.event.propertyName)) {
+
+        desc = Object.getOwnPropertyDescriptor(Node.prototype, name);
+
+        NodeChildren.forEach(function(child) {
+
+          Object.defineProperty(child.prototype, name, desc);
+
+        });
+      }
+
+    });
+
+
+    Object.defineProperty(window, 'Node', {
+      value: Node
+    });
+
+    ;(function() {
+      var originalPropertyDefinition = Object.defineProperty;
+
+      Object.defineProperty = function defineProperty(object, name, description) {
+        var ret = originalPropertyDefinition.apply(this, arguments);
+
+        if (object.nodeType && object.fireEvent) {
+          var e = document.createEventObject();
+
+          e.propertyName = name;
+
+          object.fireEvent('onpropertychange', e);
+        }
+
+        return ret;
+
+      };
+
+    }());
+
+  }
+
+
+  var dom = Sync.dom = {
     cache: function(elem, hash, value) {
       var data = elem._ || (elem._ = {});
 
@@ -22,7 +96,7 @@
         return data;
       } else {
         if (typeof value !== 'undefined') {
-          data[hash] = value
+          return data[hash] = value;
         } else {
           return data[hash] || (data[hash] = {});
         }
@@ -57,7 +131,29 @@
       get: function() {
         return head;
       }
-    })
+    });
   };
+
+  if (!('textContent' in document.createElement('div'))
+    && 'innerText' in Element.prototype) {
+    Object.defineProperty(Element.prototype, 'textContent', {
+      get: function() {
+        return this.innerText;
+      },
+      set: function(value) {
+        this.innerText = value;
+      }
+    });
+  }
+
+  //http://www.quirksmode.org/blog/archives/2006/01/contains_for_mo.html
+  if (Node && !Node.prototype.contains && Node.prototype.compareDocumentPosition) {
+    Object.defineProperty(Node.prototype, 'contains', {
+      value: function contains(node) {
+        return !!(this.compareDocumentPosition(node) & 16);
+      }
+    });
+  }
+
 
 }(this, Sync));

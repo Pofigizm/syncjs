@@ -2,123 +2,141 @@
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 
 ;(function(window, undefined) {
-	"use strict";
 
-	var toString = Object.prototype.toString,
-	valueOf = Object.prototype.valueOf,
-	hasOwn = Object.prototype.hasOwnProperty,
-	arrayProto = Array.prototype,
-  Sync = window.Sync = function Sync() {
+  "use strict";
 
-  },
-	
-	//iteration each own properties of passing obj
-	//and call fn with key/value arguments
-	//additionaly passing an third argument -
-	// - slice of "each" function arguments 
-	//which starting at 2
-	NOT_ENUMERABLE = [
-		'prototype',
-		'__proto__'
-	],
-	each = Sync.each = function(obj, fn) {
-		var key, args = arrayProto.slice.call(arguments, 2);
+  var toString = Object.prototype.toString,
+    valueOf = Object.prototype.valueOf,
+    hasOwn = Object.prototype.hasOwnProperty,
+    arrayProto = Array.prototype,
+    Sync = window.Sync = function Sync() {
 
-		if (typeof fn != 'function') {
-      throw new TypeError('window.tools.each - wrong arguments "fn"');
-    }
+    },
 
-		for (key in obj) {
-      hasOwn.call(obj, key)
-        && NOT_ENUMERABLE.indexOf(key) === -1
-        && fn(key, obj[key], args);
-    }
+    //iteration each own properties of passing obj
+    //and call fn with key/value arguments
+    //additionaly passing an third argument -
+    // - slice of "each" function arguments
+    //which starting at 2
+    each = Sync.each = function(obj, fn) {
+      var key, args = arrayProto.slice.call(arguments, 2);
 
-		return obj;
-	},
-	
-	//function for inhrerits some classes
-	//expect one require argument - config
-	//which describes the 
-	// - "parent" - constructor, that need to be inherited
-	// - "proto" - object, that will be added
-	//to newly created constructor
-	inherits = Sync.inherits = function(config) {
-		config = config || {};
+      if (typeof fn != 'function') {
+        throw new TypeError('window.tools.each - wrong arguments "fn"');
+      }
 
-		var parent = typeof config.parent === 'function' && config.parent;
+      for (key in obj) {
+        hasOwn.call(obj, key)
+          && key !== 'prototype'
+          && fn(obj[key], key, args);
+      }
 
-		if (!parent) return null;
+      return obj;
+    },
 
-    var newClass = function() {
-      var self = parent.apply(this, arguments) || this;
-      self = config.handler && config.handler.apply(self, arguments) || self;
-      if(self !== undefined && self !== this) return self;
+    //function for inhrerits some classes
+    //expect one require argument - config
+    //which describes the
+    // - "parent" - constructor, that need to be inherited
+    // - "proto" - object, that will be added
+    //to newly created constructor
+    inherits = function(parent, handler, proto, meta){
+      handler || (handler = function(){});
+      var newClass = function(){
+        var self = this;
+        if(!(this instanceof newClass)){
+          self = Object.create(newClass.prototype);
+        };
+        parent.apply(self, arguments);
+        handler.apply(self, arguments);
+        return self;
+      };
+      newClass.prototype = Object.create(parent.prototype);
+      newClass.prototype.__super__ = parent;
+      newClass.prototype.__parent__ = parent;
+      newClass.prototype.constructor = newClass;
+      Sync.extend(true, newClass.prototype, proto);
+      return newClass;
+    },
+
+    //indicates that first passed argument
+    //is object or not
+
+    isObject = Sync.isObject = function(obj) {
+      obj = obj && obj.valueOf && obj.valueOf() || obj;
+      return obj != null && typeof obj === 'object';
+    },
+
+    isStrict = function() {
+      return !this;
+    },
+
+    extend = Sync.extend = function(tmp) {
+      var args = arguments,
+        overwrite = true,
+        recurse = false,
+        start = 1,
+        end = args.length,
+        to = args[0];
+
+      if (end < 2) return tmp || null;
+
+      if (typeof tmp === 'boolean') {
+        to = args[start++];
+        recurse = args[0];
+      }
+
+      if (typeof args[end-1] === 'boolean') {
+        overwrite = args[--end];
+      }
+
+      function action(value, key) {
+        if (recurse
+          && (isObject(value))
+          && (to[key] && overwrite
+          || !to[key])) {
+
+          /*if (!isObject(to[key])) {
+            console.log(key, value, to[key]);
+            to[key] = {};
+          }*/
+
+          if (!Array.isArray(to[key]) && !isObject(to[key])) {
+
+            if (Array.isArray(value)) {
+              to[key] = [];
+            } else {
+              to[key] = Object.create(value.__proto__ || value.constructor.prototype);
+            }
+          }
+
+          extend(recurse, to[key], value, overwrite);
+
+        } else {
+          !overwrite && key in to || (to[key] = value);
+        }
+      }
+
+      for (; start < end; start++) {
+
+        if (Array.isArray(args[start])) {
+          args[start].forEach(action);
+        } else {
+          each(args[start], action);
+        }
+
+      }
+
+      return to;
     };
 
-		extend(extend(newClass.prototype = Object.create(parent.prototype),
-        config.proto).constructor = newClass, config.meta, {
-        __parent__: parent
-      });
-
-		return newClass;
-	},
-
-	//indicates that first passed argument
-	//is object or not
-
-	isObject = Sync.isObject = function(obj) {
-		obj = valueOf.call(obj);
-		return obj != null && typeof obj === 'object';
-	},
-
-	isStrict = function() {
-		return !this;
-	},
-
-	extend = Sync.extend = function(tmp) {
-		var args = arguments,
-      overwrite = true,
-      recurse = false,
-      start = 1,
-      end = args.length,
-      to = args[0];
-
-		if (end < 2) return tmp || null;
-
-    if (typeof tmp === 'boolean') {
-      to = args[start++];
-      recurse = args[0];
+  Sync.ua = (function(arr, ua) {
+    return {
+      chrome: !!window.chrome,
+      opera: !!window.opera,
+      gecko: !!window.Components,
+      oldIE: !!window.ActiveXObject
     }
-
-    if (typeof args[end-1] === 'boolean') {
-      overwrite = args[--end]
-    }
-
-		for (; start < end; start++) {
-			each(args[start], function(key, value) {
-				if (recurse
-            && isObject(value)
-            && to[key]
-            && (isObject(to[key]) || (to[key] = {}))) {
-					extend(recurse, to[key], value, overwrite);
-				} else {
-					!overwrite && key in to || (to[key] = value);
-				}
-			});
-		}
-
-		return to;
-	},
-	userAgent = window.navigator.userAgent.toLowerCase();
-	Sync.ua = (function(arr, ua) {
-		ua[(ua.ver = arr[2]) && (ua.name = arr[1])] = true;
-		return ua;
-	}(
-		/(firefox)\/([\d\.]+)/.exec(userAgent) ||
-		/(chrome)\/([\d\.]+)/.exec(userAgent) ||
-		/(opera)(?:.*)version\/([\d\.]+)/.exec(userAgent) ||
-		/ms(ie) ([\d\.]+)/.exec(userAgent) ||
-		/(safari)\/([\d\.]+)/.exec(userAgent.replace(/(version)(.*)(safari)/, '$3$2$1')) || [], {}));
+  }());
 
 }(this));

@@ -1,7 +1,7 @@
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 
-(function(window, Sync, undefined){
+(function(window, document, Sync, undefined){
   "use strict";
 
   var Element = window.Element || window.HTMLElement,
@@ -155,5 +155,13 @@
     });
   }
 
+  if ((!'origin' in window.location)) {
+    Object.defineProperty(window.location, 'origin', {
+      get: function() {
+        return this.protocol + '//' + this.host;
+      }
+    });
+  }
 
-}(this, Sync));
+
+}(this, document, Sync));

@@ -18,8 +18,8 @@
     //additionaly passing an third argument -
     // - slice of "each" function arguments
     //which starting at 2
-    each = Sync.each = function(obj, fn) {
-      var key, args = arrayProto.slice.call(arguments, 2);
+    each = Sync.each = function(obj, fn/*, thisValue*/) {
+      var key;
 
       if (typeof fn != 'function') {
         throw new TypeError('window.tools.each - wrong arguments "fn"');
@@ -28,7 +28,7 @@
       for (key in obj) {
         hasOwn.call(obj, key)
           && key !== 'prototype'
-          && fn(obj[key], key, args);
+          && fn.call(arguments[2] || null, obj[key], key, obj);
       }
 
       return obj;
@@ -91,23 +91,14 @@
       }
 
       function action(value, key) {
+
         if (recurse
           && (isObject(value))
           && (to[key] && overwrite
           || !to[key])) {
 
-          /*if (!isObject(to[key])) {
-            console.log(key, value, to[key]);
-            to[key] = {};
-          }*/
-
           if (!Array.isArray(to[key]) && !isObject(to[key])) {
-
-            if (Array.isArray(value)) {
-              to[key] = [];
-            } else {
-              to[key] = Object.create(value.__proto__ || value.constructor.prototype);
-            }
+            to[key] = Array.isArray(value) ? [] : {};
           }
 
           extend(recurse, to[key], value, overwrite);

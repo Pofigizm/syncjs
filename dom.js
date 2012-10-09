@@ -7,7 +7,7 @@
   var Element = window.Element || window.HTMLElement,
     Document = window.Document || window.HTMLDocument,
     Node = window.Node,
-    createElement = document.createElement.bind(document),
+    createElement = typeof document.createElement === 'function' ? document.createElement.bind(document) : document.createElement,
     element = createElement('div'),
     head = document.getElementsByTagName('head')[0],
     R_CAMEL_2_CSS = /[A-Z](?=\w)/g,
@@ -16,8 +16,20 @@
     },
     NodeChildren = [
       Element,
-      Document
-    ];
+      Document,
+      Text
+    ],
+    applyingMutations = {
+      append: [Element, window.DocumentFragment],
+      prepend: [Element, window.DocumentFragment],
+      before: [],
+      after: [],
+      replace: [Element, window.Text],
+      remove: [Element, window.Text]
+    },
+    define = Object.defineProperty,
+    getDescriptor = Object.getOwnPropertyDescriptor,
+    slice = Array.prototype.slice;
 
   if (!Node && document.attachEvent) {
     window.Node = Node = function Node() {};
@@ -43,6 +55,16 @@
       Node[name] = Node.prototype[name] = value + 1;
     });
 
+    [
+      'DOCUMENT_POSITION_DISCONNECTED',
+      'DOCUMENT_POSITION_PRECEDING',
+      'DOCUMENT_POSITION_FOLLOWING',
+      'DOCUMENT_POSITION_CONTAINS',
+      'DOCUMENT_POSITION_CONTAINED_BY'
+    ].forEach(function(name, value) {
+      Node[name] = Node.prototype[name] = Math.pow(2, value);
+    });
+
     Node.prototype.attachEvent('onpropertychange', function() {
       var name,
         desc;
@@ -53,7 +75,7 @@
 
         NodeChildren.forEach(function(child) {
 
-          Object.defineProperty(child.prototype, name, desc);
+          define(child.prototype, name, desc);
 
         });
       }
@@ -61,14 +83,14 @@
     });
 
 
-    Object.defineProperty(window, 'Node', {
+    define(window, 'Node', {
       value: Node
     });
 
     ;(function() {
-      var originalPropertyDefinition = Object.defineProperty;
+      var originalPropertyDefinition = define;
 
-      Object.defineProperty = function defineProperty(object, name, description) {
+      define = Object.defineProperty = function defineProperty(object, name, description) {
         var ret = originalPropertyDefinition.apply(this, arguments);
 
         if (object.nodeType && object.fireEvent) {
@@ -98,7 +120,7 @@
         if (typeof value !== 'undefined') {
           return data[hash] = value;
         } else {
-          return data[hash] || (data[hash] = {});
+          return typeof data[hash] !== 'undefined' ? data[hash] : (data[hash] = {});
         }
       }
 
@@ -134,9 +156,9 @@
     });
   };
 
-  if (!('textContent' in document.createElement('div'))
+  if (!('textContent' in element)
     && 'innerText' in Element.prototype) {
-    Object.defineProperty(Element.prototype, 'textContent', {
+    define(Element.prototype, 'textContent', {
       get: function() {
         return this.innerText;
       },
@@ -146,21 +168,124 @@
     });
   }
 
-  //http://www.quirksmode.org/blog/archives/2006/01/contains_for_mo.html
-  if (Node && !Node.prototype.contains && Node.prototype.compareDocumentPosition) {
-    Object.defineProperty(Node.prototype, 'contains', {
-      value: function contains(node) {
-        return !!(this.compareDocumentPosition(node) & 16);
+  if (!('outerHTML' in element)) {
+    define(Element.prototype, 'outerHTML', {
+      get: function() {
+        var tmp = document.createElement('div'),
+          html;
+
+        tmp.appendChild(this.cloneNode(true));
+
+        html = tmp.innerHTML;
+
+        tmp = null;
+
+        return html;
+
+      },
+      set: function(value) {
+
       }
     });
   }
 
-  if ((!'origin' in window.location)) {
-    Object.defineProperty(window.location, 'origin', {
-      get: function() {
-        return this.protocol + '//' + this.host;
+  // http://www.quirksmode.org/blog/archives/2006/01/contains_for_mo.html
+  if (Node && !Node.prototype.contains && 'compareDocumentPosition' in Element.prototype) {
+    var compareDocumentPosition = Element.prototype.compareDocumentPosition;
+    define(Node.prototype, 'contains', {
+      value: function contains(node) {
+        return !!(compareDocumentPosition.call(this, node) & 16);
       }
     });
+  }
+
+  if (!('getComputedStyle' in window)
+    && 'currentStyle' in Element.prototype) {
+    define(window, 'getComputedStyle', {
+      value: function(node) {
+        if (node && node.nodeType === Node.ELEMENT_NODE) {
+          return node.currentStyle;
+        } else {
+          return null;
+        }
+      }
+    });
+  }
+
+  // DOM4 Draft
+  // http://dvcs.w3.org/hg/domcore/raw-file/tip/Overview.html#mutation-methods
+
+  // ---
+
+  if (!window.ClientRect && window.TextRectangle && !('width' in window.TextRectangle)) {
+    Object.defineProperties(TextRectangle.prototype, {
+      width: {
+        get: function() {
+          return this.right - this.left;
+        }
+      },
+      height: {
+        get: function() {
+          return this.bottom - this.top;
+        }
+      }
+    });
+  }
+
+
+  // ---
+
+  var vendors = Sync.vendors = 'WebKit|Moz|MS|O',
+    prefix = Sync.prefix = (function() {
+
+    var styles = window.getComputedStyle(document.documentElement, ''),
+      pre,
+      dom;
+
+      try {
+        pre = (Array.prototype.slice.call(styles).join('').match(/moz|webkit|ms/) || (styles.OLink === '' && ['o']))[0];
+      } catch (e) {
+        pre = 'ms';
+      }
+
+      dom = (vendors).match(new RegExp('(' + pre + ')', 'i'))[1];
+
+
+    return {
+      dom: dom,
+      prop: dom.toLowerCase(),
+      lowercase: pre,
+      css: '-' + pre + '-',
+      js: pre[0].toUpperCase() + pre.slice(1)
+    };
+
+  })();
+
+
+
+  // HTML5
+
+  if (!('matchesSelector' in Element.prototype)
+    && !(prefix.pro + 'matchesSelector') in Element.prototype) {
+    define(Element.prototype, 'matchesSelector', {
+      value: function(selector) {
+        var tmp = document.createElement('div'),
+          clone = this.cloneNode(false);
+
+        tmp.appendChild(clone);
+
+        var match = !!tmp.querySelector(selector);
+
+        clone = tmp = null;
+
+        return match;
+
+      }
+    })
+  }
+
+  if (!('pageXOffset' in window) || !('pageYOffset' in window)) {
+    //define()
   }
 
 

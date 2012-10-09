@@ -9,9 +9,7 @@
     valueOf = Object.prototype.valueOf,
     hasOwn = Object.prototype.hasOwnProperty,
     arrayProto = Array.prototype,
-    Sync = window.Sync = function Sync() {
-
-    },
+    Sync = window.Sync = function Sync() {},
 
     //iteration each own properties of passing obj
     //and call fn with key/value arguments
@@ -40,23 +38,71 @@
     // - "parent" - constructor, that need to be inherited
     // - "proto" - object, that will be added
     //to newly created constructor
-    inherits = function(parent, handler, proto, meta){
-      handler || (handler = function(){});
-      var newClass = function(){
+    inherits = Sync.inherits = function(options) {
+
+      var handler = options.handler || function() {},
+        parent = options.parent,
+        proto = options.proto,
+        meta = options.meta,
+        mixins = options.mixins;
+
+      if (Array.isArray(mixins) && mixins.length) {
+        var mix = mixins.pop();
+
+        // An alternative way
+        // Infinite battle -- loop vs. recursion
+
+        /*while (mix = mixins.pop()) {
+          parent = inherits({
+            handler: mix,
+            meta: mix,
+            proto: mix.prototype,
+            parent: parent
+          });
+
+        }*/
+
+        parent = inherits({
+          handler: mix,
+          meta: mix,
+          proto: mix.prototype,
+          parent: parent,
+          mixins: mixins
+        });
+
+      }
+
+      function Class() {
         var self = this;
-        if(!(this instanceof newClass)){
-          self = Object.create(newClass.prototype);
-        };
-        parent.apply(self, arguments);
+
+        if (parent) {
+
+          if (!(this instanceof parent)) {
+            self = Object.create(parent.prototype);
+          }
+
+          parent.apply(self, arguments);
+        }
+
         handler.apply(self, arguments);
         return self;
       };
-      newClass.prototype = Object.create(parent.prototype);
-      newClass.prototype.__super__ = parent;
-      newClass.prototype.__parent__ = parent;
-      newClass.prototype.constructor = newClass;
-      Sync.extend(true, newClass.prototype, proto);
-      return newClass;
+
+      if (parent) {
+        Class.prototype = Object.create(parent.prototype);
+      }
+
+      Sync.extend(true, Class, parent, meta);
+      Sync.extend(Class.prototype, proto);
+
+      Class.prototype.constructor = Class;
+
+      if (parent) {
+        Class.prototype.__super__ = parent;
+        Class.prototype.__parent__ = parent.prototype;
+      }
+
+      return Class;
     },
 
     //indicates that first passed argument
@@ -92,10 +138,8 @@
 
       function action(value, key) {
 
-        if (recurse
-          && (isObject(value))
-          && (to[key] && overwrite
-          || !to[key])) {
+        if (recurse && (isObject(value))
+          && (to[key] && overwrite || !to[key])) {
 
           if (!Array.isArray(to[key]) && !isObject(to[key])) {
             to[key] = Array.isArray(value) ? [] : {};
@@ -103,7 +147,7 @@
 
           extend(recurse, to[key], value, overwrite);
 
-        } else {
+        } else if (typeof value !== 'undefined') {
           !overwrite && key in to || (to[key] = value);
         }
       }
@@ -129,5 +173,102 @@
       oldIE: !!window.ActiveXObject
     }
   }());
+
+  Sync.toString = function() {
+    return 'Your think goes here ...';
+  };
+
+  if (!('origin' in window.location)) {
+    try {
+      Object.defineProperty(window.location, 'origin', {
+        get: function() {
+          return this.protocol + '//' + this.host;
+        }
+      });
+    } catch (e) {
+      window.location.origin = window.location.protocol + '//' + window.location.host;
+    }
+  }
+
+  if (!('innerWidth' in window)) {
+    Object.defineProperties(window, {
+      innerWidth: {
+        get: function() {
+          if (document.compatMode !== "CSS1Compat" && document.body) {
+            return document.body.clientWidth || 0;
+          } else {
+            return document.documentElement.clientWidth || 0;
+          }
+        }
+      },
+      innerHeight: {
+        get: function() {
+          if (document.compatMode !== "CSS1Compat" && document.body) {
+            return document.body.clientHeight || 0;
+          } else {
+            return document.documentElement.clientHeight || 0;
+          }
+        }
+      }
+    });
+  }
+
+  var escape = function(key, val) {
+      if (Array.isArray(val)) {
+        return val.map(function(deepVal) {
+          return escape(key, deepVal);
+        });
+      } else {
+        return  key + '=' + encodeURIComponent(val);
+      }
+    },
+    equal = function(first, second, recursion) {
+      if (Array.isArray(first)) {
+        return first.every(function(val, i) {
+          return recursion(val, second[i]);
+        });
+      } else if (typeof first === 'object' && first !== null) {
+        return Object.keys(first).every(function(val) {
+          return recursion(first[val], second[val]);
+        });
+      } else {
+        return first === second;
+      }
+
+    };
+
+  Sync.escape = function(obj) {
+    return Object.keys(obj).map(function(key) {
+
+      return escape(key, obj[key]);
+
+    }).join('&');
+  };
+
+  Sync.equal = function(first, second) {
+
+    if (!first && !second) {
+      return true;
+    } if (toString.call(first) !== toString.call(second)
+      || first.length !== second.length) {
+      return false;
+    } else {
+      return equal(first, second, Sync.equal);
+    }
+
+  };
+
+  Sync.unscape = function(string) {
+    if (typeof string !== 'string') return null;
+
+    return string.split('&').reduce(function(result, prop) {
+      if (prop) {
+        prop = prop.split('=');
+        result[prop[0]] = decodeURIComponent(prop[1]);
+      }
+      return result;
+    }, {});
+
+  };
 
 }(this));

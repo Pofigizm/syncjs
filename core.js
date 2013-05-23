@@ -2,13 +2,11 @@
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 
 ;(function(window, undefined) {
-
   "use strict";
 
   var R_QUERY_SEARCH = /^([\w\d]*)(\[[\s\S]*\])$/;
 
   var toString = Object.prototype.toString,
-    valueOf = Object.prototype.valueOf,
     hasOwn = Object.prototype.hasOwnProperty,
     arrayProto = Array.prototype,
     slice = arrayProto.slice,
@@ -20,9 +18,7 @@
     // - slice of "each" function arguments
     //which starting at 2
     each = Sync.each = function(obj, fn/*, thisValue*/) {
-      if (typeof fn != 'function') {
-        throw new TypeError('window.tools.each - wrong arguments "fn"');
-      }
+      if (typeof fn !== 'function') return obj;
 
       for (var key in obj) {
         hasOwn.call(obj, key) && key !== 'prototype' &&
@@ -39,84 +35,93 @@
     // - "proto" - object, that will be added
     //to newly created constructor
     inherits = Sync.inherits = function(options) {
-
       var handler = options.handler,
         parent = options.parent,
         proto = options.proto,
         meta = options.meta,
-        mixins = options.mixins;
+        mixins = options.mixins,
+        name = options.name || 'unnamed' + Date.now(),
+        parentMixins,
+        handlers,
+        classProto;
+
+      if (parent) {
+        classProto = Class.prototype = Object.create(parent.prototype);
+        parentMixins = parent.__mixins__;
+      } else {
+        classProto = Class.prototype;
+      }
 
       if (isArray(mixins) && mixins.length) {
-        var mix = mixins.pop();
+        mixins = mixins.filter(function(mix) {
+          if (!mix || parentMixins &&
+              parentMixins.indexOf(mix) !== -1) return false;
 
-        // An alternative way
-        // Infinite battle -- loop vs. recursion
+          extend(true, Class, mix);
+          extend(classProto, mix.prototype);
 
-        /*while (mix = mixins.pop()) {
-          parent = inherits({
-            handler: mix,
-            meta: mix,
-            proto: mix.prototype,
-            parent: parent
-          });
-
-        }*/
-
-        parent = inherits({
-          handler: mix,
-          meta: mix,
-          proto: mix.prototype,
-          parent: parent,
-          mixins: mixins
+          return true;
         });
       }
+
+      handlers = (parent && parent.__handlers__ || []).concat(mixins ? mixins.reduce(function(result, mix) {
+        return result.concat(mix.__handlers__);
+      }, []) : []).filter(function(handler, i, arr) {
+        return arr.indexOf(handler) === i;
+      });
+
+      handler && handlers.push(handler);
+
+      extend(true, Class, parent, meta);
+      extend(classProto, proto);
+
+      classProto.constructor = Class;
+
+      if (parent) {
+        classProto.__super__ = parent;
+        classProto.__parent__ = parent.prototype;
+      }
+
+      Class.toString = function() {
+        return '[SyncClass ' + name + ']';
+      };
+
+      classProto.toString = function() {
+        return '[SyncObject ' + name + ']';
+      };
+
+      Class.__name__ = name;
+      Class.__mixins__ = mixins;
+      Class.__handlers__ = handlers;
 
       function Class() {
         var self = this;
 
-        if (parent) {
-          if (!(this instanceof parent)) {
-            self = Object.create(parent.prototype);
-          }
-
-          parent.apply(self, arguments);
+        if (parent && !(this instanceof parent)) {
+          self = Object.create(parent.prototype);
         }
 
-        handler && handler.apply(self, arguments);
+        for (var i = 0, len = handlers.length, handler; i < len; i++) {
+          handler = handlers[i];
+          /*mix && */handler.apply(self, arguments);
+        }
+
         return self;
-      }
-
-      if (parent) {
-        Class.prototype = Object.create(parent.prototype);
-      }
-
-      extend(true, Class, parent, meta);
-      extend(Class.prototype, proto);
-
-      Class.prototype.constructor = Class;
-
-      if (parent) {
-        Class.prototype.__super__ = parent;
-        Class.prototype.__parent__ = parent.prototype;
       }
 
       return Class;
     },
 
-    //indicates that first passed argument
-    //is object or not
-
+    // indicates that first passed argument
+    // is object or not
     isObject = Sync.isObject = function(obj) {
-      obj = obj && obj.valueOf && obj.valueOf() || obj;
+      obj = obj && typeof obj.valueOf === 'function' && obj.valueOf() || obj;
       return obj != null && typeof obj === 'object';
     },
-
     isStrict = function() {
       return !this;
     },
-
     isArray = Array.isArray,
-
     extend = Sync.extend = function(tmp) {
       var args = arguments,
         overwrite = true,
@@ -161,17 +166,8 @@
       return to;
     };
 
-  Sync.ua = (function(arr, ua) {
-    return {
-      chrome: !!window.chrome,
-      opera: !!window.opera,
-      gecko: !!window.Components,
-      oldIE: !!window.ActiveXObject
-    };
-  }());
-
   Sync.toString = function() {
-    return 'Your think goes here ...';
+    return 'https://github.com/NekR/Sync';
   };
 
   var escape = function(key, val) {
@@ -182,7 +178,9 @@
       } else if (typeof val === 'object') {
         return Object.keys(val).map(function(rest) {
           return escape(key + '[' + rest + ']', this[rest]);
-        }, val).join('&');
+        }, val).filter(function(val) {
+          return val;
+        }).join('&');
       } else {
         return key + '=' + encodeURIComponent(val);
       }
@@ -199,7 +197,6 @@
       } else {
         return first === second;
       }
-
     },
     unescapePair = Sync.unescapePair = function(target, name, value) {
       name = decodeURIComponent(name);
@@ -233,10 +230,9 @@
   };
 
   Sync.equal = function(first, second) {
-    if ((!first && !second) || (first === second)) {
+    if (first === second) {
       return true;
-    } else if (!first || !second ||
-               toString.call(first) !== toString.call(second) ||
+    } else if (!first || !second || typeof first !== typeof second ||
           first.length !== second.length) {
       return false;
     } else {
@@ -244,17 +240,21 @@
     }
   };
 
-  Sync.unescape = function(string) {
+  Sync.unescape = function(string, linear) {
     if (typeof string !== 'string') return null;
 
     return string.split('&').reduce(function(result, prop) {
       if (prop) {
         prop = prop.split('=');
-        unescapePair(result, prop[0], prop[1]);
+
+        if (linear) {
+          result[decodeURIComponent(prop[0])] = decodeURIComponent(prop[1]);
+        } else {
+          unescapePair(result, prop[0], prop[1]);
+        }
       }
+
       return result;
     }, {});
-
   };
-
 }(this));

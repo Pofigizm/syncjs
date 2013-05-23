@@ -229,15 +229,14 @@
     dataset: function(node, name, value) {
       if (!node || !name) return null;
 
-      name = name.replace(R_CAMEL_2_CSS, camel2css);
+      name = 'data-' + name.replace(R_CAMEL_2_CSS, camel2css);
 
       if (value !== void 0 || value === null) {
-        node.setAttribute('data-' + name, value);
+        node.setAttribute(name, value);
         return value;
-      } else {
-        value = node.getAttribute('data-' + name);
-        return value == null ? void 0 : value;
       }
+
+      return node.hasAttribute(name) ? node.getAttribute(name) : void 0;
     },
     inTree: function(elem) {
       return elem && elem.nodeType &&
@@ -306,7 +305,9 @@
         value: function(from, to) {
           if (this instanceof window.StaticNodeList ||
               this instanceof window.NodeList ||
-              this instanceof window.HTMLCollection) {
+              this instanceof window.HTMLCollection ||
+              this instanceof window.HTMLFormElement ||
+              this instanceof window.HTMLSelectElement) {
 
             from |= 0;
             typeof to === 'number' || (to = this.length);
@@ -329,6 +330,7 @@
 
             return result;
           } else {
+
             return slice.apply(this, arguments);
           }
         }
@@ -407,13 +409,14 @@
         set: function(html) {
           if (!this.styleSheet) {
             var cache = Sync.dom.cache(this),
+              self = this,
               handler = function() {
-                if (this.readyState === 'loading' ||
-                    this.readyState === 'complete') {
-                  this.detachEvent('onreadystatechange', handler);
-                  this.innerHTML = cache[_styleSheetHTMLKey];
+                if (self.readyState === 'loading' ||
+                    self.readyState === 'complete') {
+                  self.detachEvent('onreadystatechange', handler);
+                  self.innerHTML = cache[_styleSheetHTMLKey];
                 }
-              }.bind(this);
+              };
 
             cache[_styleSheetHTMLKey] =
               (cache[_styleSheetHTMLKey] || '') + html;
@@ -429,8 +432,8 @@
 
   // http://www.quirksmode.org/blog/archives/2006/01/contains_for_mo.html
   if (Node && !Node.prototype.contains &&
-      'compareDocumentPosition' in Node.prototype) {
-    var compareDocumentPosition = Node.prototype.compareDocumentPosition;
+      'compareDocumentPosition' in Element.prototype) {
+    var compareDocumentPosition = Element.prototype.compareDocumentPosition;
     define(Node.prototype, 'contains', {
       value: function contains(node) {
         return !!(compareDocumentPosition.call(this, node) & 16);
@@ -438,6 +441,7 @@
     });
   }
 
+  // IE8
   if (Node && !('compareDocumentPosition' in Node.prototype) &&
       'sourceIndex' in Node.prototype && 'contains' in Node.prototype) {
     define(Node.prototype, 'compareDocumentPosition', {
@@ -573,38 +577,36 @@
   // ---
   // Copy-pated from X-tags repo by Mozilla
   // http://github.com/mozilla/x-tag
-  var vendors = Sync.vendors = 'WebKit|Moz|MS|O',
-    prefix = Sync.prefix = (function() {
+  var prefix = Sync.prefix = (function() {
+      var styles = window.getComputedStyle(document.documentElement),
+        pre,
+        dom;
 
-    var styles = window.getComputedStyle(document.documentElement, ''),
-      pre,
-      dom;
+        try {
+          pre = (slice.call(styles).join('')
+                  .match(/-(moz|webkit|ms)-/) || (styles.OLink === '' && ['', 'o']))[1];
+        } catch (e) {
+          pre = 'ms';
+        }
 
-      try {
-        pre = (Array.prototype.slice.call(styles).join('')
-               .match(/moz|webkit|ms/) || (styles.OLink === '' && ['o']))[0];
-      } catch (e) {
-        pre = 'ms';
-      }
+        dom = pre === 'ms' ? pre.toUpperCase() : pre;
 
-      dom = (vendors).match(new RegExp('(' + pre + ')', 'i'))[1];
-
-    return {
-      dom: dom,
-      prop: dom.toLowerCase(),
-      lowercase: pre,
-      css: '-' + pre + '-',
-      js: pre[0].toUpperCase() + pre.slice(1)
-    };
-  })();
+      return {
+        dom: dom,
+        prop: dom.toLowerCase(),
+        lowercase: pre,
+        css: '-' + pre + '-',
+        js: pre[0].toUpperCase() + pre.slice(1)
+      };
+    })();
 
 
 
   // HTML5
 
   if (!('matchesSelector' in Element.prototype) &&
-    !((prefix.prop + 'MatchesSelector') in Element.prototype) &&
-    !('matches' in Element.prototype)) {
+      !((prefix.prop + 'MatchesSelector') in Element.prototype) &&
+      !('matches' in Element.prototype)) {
     define(Element.prototype, 'matchesSelector', {
       value: function(selector) {
         var tmp = document.createElement('div'),
@@ -624,7 +626,7 @@
       value: function() {
         var key = prefix.prop + 'Matches';
 
-        return (key in this ? this[key] : this.matchesSelector)
+        return (key in this ? this[key] : this[key + 'Selector'] || this.matchesSelector)
           .apply(this, arguments);
       }
     });
@@ -691,10 +693,6 @@
     }
   });
 
-/*
-  var R_PROGID_FILTER = /(?:^|\s)progid:DXImageTransform\.Microsoft\.Alpha\((.*?)\)/i,
-    R_ALPHA_FILTER = /(?:^|\s)alpha\((.*?)\)/i;
-
   if (!('cssFloat' in document.documentElement.style) &&
     'styleFloat' in document.documentElement.style &&
     'CSSStyleDeclaration' in window) {
@@ -707,6 +705,10 @@
       }
     });
   }
+
+/*
+  var R_PROGID_FILTER = /(?:^|\s)progid:DXImageTransform\.Microsoft\.Alpha\((.*?)\)/i,
+    R_ALPHA_FILTER = /(?:^|\s)alpha\((.*?)\)/i;
 
   if (!('opacity' in document.documentElement.style) &&
     'filter' in document.documentElement.style &&

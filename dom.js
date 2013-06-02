@@ -212,20 +212,7 @@
   }
 
   var dom = Sync.dom = {
-    cache: function(elem, hash, value) {
-      var data = elem._ || (elem._ = {});
-
-      if (!hash) {
-        return data;
-      } else {
-        if (typeof value !== 'undefined') {
-          return data[hash] = value;
-        } else {
-          return typeof data[hash] !== 'undefined' ?
-            data[hash] : (data[hash] = {});
-        }
-      }
-    },
+    cache: Sync.cache,
     dataset: function(node, name, value) {
       if (!node || !name) return null;
 

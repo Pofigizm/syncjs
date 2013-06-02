@@ -1,21 +1,101 @@
 (function(window, document, Sync, undefined) {
   "use strict";
 
-  var cacheData = Sync.dom.cache;
+  var cache = Sync.cache,
+    events = {
+      EventTarget: function() {}
+    };
 
-  var events = Sync.events = {
+  Sync.each({
+    'Event': [
+      'bubbles',
+      'cancelable'
+    ],
+    'CustomEvent': [
+      'bubbles',
+      'cancelable',
+      'detail'
+    ],
+    'UIEvent': [
+      'bubbles',
+      'cancelable',
+      'view',
+      'detail'
+    ],
+    'MouseEvent': [
+      'bubbles',
+      'cancelable',
+      'view',
+      'detail',
+      'screenX',
+      'screenY',
+      'clientX',
+      'clientY',
+      'ctrlKey',
+      'altKey',
+      'shiftKey',
+      'metaKey',
+      'button',
+      'relatedTarget'
+    ]
+  }, function(params, event) {
+    try {
+      new window[event]('test', {});
+    } catch (e) {
+      window['_' + event] = window[event];
+      window[event] = function(type, dict) {
+        var init = params.map(function(prop) {
+          return dict[prop];
+        }),
+        e = document.createEvent(event);
+
+        init.unshift(type);
+        e['init' + event].apply(e, init);
+
+        return e;
+      };
+    }
+  });
+
+  events.EventTarget.prototype = {
+    getNode: function() {
+      return this.node || (this.node = document.createElement('event-target'));
+    }
+  };
+
+  [
+    'addEventListener',
+    'removeEventListener',
+    'dispatchEvent'
+  ].forEach(function(method) {
+    this[method] = function() {
+      return this.getNode()[method].apply(this, arguments);
+    };
+  }, events.EventTarget.prototype);
+
+
+
+
+
+
+  /*var events = Sync.events = {
     EventTarget: function() {
 
     },
-    EventListener: function(type, handler, capture) {
+    EventListener: function(type, handler, capture, thisTarget) {
       if (typeof handler === 'function' ||
-          typeof type === 'string') return null;
 
       this.type = type;
       this.handler = handler;
       this.capture = typeof capture === 'boolean' ? capture : false;
+      this.target = thisTarget;
     },
-    Event: function() {
+    constructors: {
+      Event: function() {
+        
+      }
+    },
+    createEvent: function(type) {
       
     },
     LISTENERS_KEY: 'listeners'
@@ -62,25 +142,43 @@
         handler = handler.handleEvent;
       }
 
+      if (typeof handler !== 'function') return;
+
       handler = new events.EventListener(type,
-                                         handler.bind(thisTarget),
-                                         useCapture);
+                                         handler,
+                                         useCapture,
+                                         thisTarget);
 
-      if (this.nodeType || this instanceof Window) return null;
-
-      if (!(listeners = cacheData(this, events.LISTENERS_KEY)[type])) {
-        listeners = cacheData(this, events.LISTENERS_KEY)[type] = [];
+      if (this.nodeType || this instanceof Window) {
+        // Bind events to DOM part objects
+        return null;
       }
 
-      listeners.push(handler);
+      if (!(listeners = cache(this, events.LISTENERS_KEY)[type])) {
+        listeners = cache(this, events.LISTENERS_KEY)[type] = {
+          capture: [],
+          bubbling: []
+        };
+      }
+
+      (useCapture ? listeners.capture : listeners.bubbling).push(handler);
     },
     dispatchEvent: function() {},
     removeEventListener: function() {},
     _: null
   };
 
+  events.EventListener.prototype = {
+    fire: function(event) {
+      if (!(event instanceof events.Event)) {
+        throw new TypeError();
+      }
 
-  Event: {
+      this.handler.call(this.target, event);
+    }
+  };*/
+
+  /*Event: {
     CAPTURING_PHASE: 1,
     AT_TARGET: 2,
     BUBBLING_PHASE: 3,
@@ -117,6 +215,6 @@
     },
     defaultPrevented: false,
     isTrusted: false
-  }
+  }*/
 
 }(this, this.document, Sync));

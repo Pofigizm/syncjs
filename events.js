@@ -6,6 +6,43 @@
       EventTarget: function() {}
     };
 
+  events.EventTarget.prototype = {
+    getNode: function() {
+      return this.node || (this.node = document.createElement('event-target'));
+    }
+  };
+
+  [
+    'addEventListener',
+    'removeEventListener',
+    'dispatchEvent'
+  ].forEach(function(method) {
+    this[method] = function() {
+      return this.getNode()[method].apply(this, arguments);
+    };
+  }, events.EventTarget.prototype);
+
+  (function() {
+    try {
+      document.createEvent('CustomEvent');
+    } catch (e) {
+      var _createEvent = document.createEvent;
+      document.createEvent = function(event) {
+        if (event === 'CustomEvent') {
+          var e = _createEvent.call(this, 'Event');
+          e.initCustomEvent = function(type, bubbles, cancelable, detail) {
+            e.initEvent(type, bubbles, cancelable);
+            e.detail = detail;
+          };
+
+          return e;
+        }
+
+        return _createEvent.call(this, event);
+      };
+    }
+  }());
+
   Sync.each({
     'Event': [
       'bubbles',
@@ -42,7 +79,7 @@
     try {
       new window[event]('test', {});
     } catch (e) {
-      window['_' + event] = window[event];
+      window[event] && (window['_' + event] = window[event]);
       window[event] = function(type, dict) {
         var init = params.map(function(prop) {
           return dict[prop];
@@ -57,24 +94,7 @@
     }
   });
 
-  events.EventTarget.prototype = {
-    getNode: function() {
-      return this.node || (this.node = document.createElement('event-target'));
-    }
-  };
-
-  [
-    'addEventListener',
-    'removeEventListener',
-    'dispatchEvent'
-  ].forEach(function(method) {
-    this[method] = function() {
-      return this.getNode()[method].apply(this, arguments);
-    };
-  }, events.EventTarget.prototype);
-
-
-
+  Sync.events = events;
 
 
 

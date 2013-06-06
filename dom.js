@@ -260,13 +260,21 @@
     try {
       define(window.location, 'origin', {
         get: function() {
-          return this.protocol + '//' + this.host;
+          return this.protocol + '//' + this.host + this.port;
         }
       });
     } catch (e) {
       window.location.origin =
-        window.location.protocol + '//' + window.location.host;
+        window.location.protocol + '//' + window.location.host + window.location.port;
     }
+  }
+
+  if (!('origin' in document.createElement('a'))) {
+    define(window.HTMLAnchorElement.prototype, 'origin', {
+      get: function() {
+        return this.protocol + '//' + this.host + this.port;
+      }
+    });
   }
 
   if (!('innerWidth' in window)) {

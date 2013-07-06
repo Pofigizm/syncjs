@@ -1,26 +1,337 @@
 (function(window, document, Sync, undefined) {
   "use strict";
 
-  var cache = Sync.cache,
-    events = {
-      EventTarget: function() {}
-    };
+  if (!document.addEventListener) return;
 
-  events.EventTarget.prototype = {
-    getNode: function() {
-      return this.node || (this.node = document.createElement('event-target'));
+  var cache = Sync.cache,
+    hasOwn = Object.prototype.hasOwnProperty,
+    events = {
+      synced: {},
+      natives: {},
+      EventTarget: function() {},
+      addEvent: function(node, event, params) {
+        var callbacks,
+          store,
+          index,
+          capture = params.capture,
+          callback = params.callback,
+          namespace = (params.namespace || '') + '';
+
+        //if ((node + '').toLowerCase().indexOf('window') !== -1) return;
+
+        callbacks = getCache({
+          node: node,
+          key: EVENTS_CALLBACKS_INDEX,
+          namespace: namespace,
+          event: event,
+          captrue: capture
+        });
+        
+        store = getCache({
+          node: node,
+          key: EVENTS_HANDLERS_STORE,
+          namespace: namespace,
+          event: event,
+          captrue: capture
+        });
+
+        index = callbacks.indexOf(callback);
+
+        if (index !== -1) {
+          return;
+        }
+
+        callbacks.push(callback);
+        store.push(params);
+
+        node.addEventListener(event, params.handler, !!capture);
+      },
+      removeEvent: function(node, event, params) {
+        var callbacks,
+          store,
+          index,
+          capture = params.capture,
+          storeData,
+          namespace = (params.namespace || '') + '';
+
+        callbacks = getCache({
+          node: node,
+          key: EVENTS_CALLBACKS_INDEX,
+          namespace: namespace,
+          event: event,
+          captrue: capture
+        });
+
+        store = getCache({
+          node: node,
+          key: EVENTS_HANDLERS_STORE,
+          namespace: namespace,
+          event: event,
+          captrue: capture
+        });
+
+        index = callbacks.indexOf(params.callback);
+
+        if (index !== -1 && (storeData = store[index])) {
+          callbacks.splice(index, 1);
+          store.splice(index, 1);
+          node.removeEventListener(event, storeData.handler, capture);
+        }
+      },
+      dispatchEvent: function(node, event, params) {
+        var defaultAction = params.defaultAction,
+          inter = window[params.type || 'CustomEvent'];
+
+        event = new inter(event, params.options);
+        
+        if (node.dispatchEvent(event) && typeof defaultAction === 'function') {
+          defaultAction.call(this);
+        }
+      },
+      cleanEvents: function(node, namespace) {
+        if (!namespace || namespace === events.NAMESPACE_INTERNAL) return;
+
+        var clean = function(namespace) {
+          if (!namespace) return;
+
+          Sync.each(namespace, function(data, event) {
+            data.capture.concat(data.bubbling).forEach(function(storeData) {
+              node.removeEventListener(event, storeData.handler, storeData.capture);
+            });
+          });
+        },
+        store = Sync.cache(node, EVENTS_HANDLERS_STORE);
+
+        delete Sync.cache(node, EVENTS_CALLBACKS_INDEX)[namespace];
+        clean(store[namespace]);
+        delete store[namespace];
+      },
+      NAMESPACE_INTERNAL: 'internal'
+    },
+    natives = events.natives,
+    commonDOMET = !HTMLDivElement.prototype.hasOwnProperty('addEventListener');
+ 
+  var EVENTS_CALLBACKS_INDEX = 'events_callbacks_index',
+    EVENTS_HANDLERS_STORE = 'events_handlers_store';
+
+  var getCache = function(params) {
+    var data = Sync.cache(params.node, params.key),
+      event = params.event,
+      namespace = params.namespace || events.NAMESPACE_INTERNAL;
+
+    if (typeof namespace !== 'string') {
+      return null;
     }
+
+    data = data.hasOwnProperty(namespace) ? data[namespace]  : (data[namespace] = {});
+
+    data = data.hasOwnProperty(event) ? data[event] : (data[event] = {
+      capture: [],
+      bubbling: []
+    });
+
+    return params.capture ? data.capture : data.bubbling;
+  },
+  getETMethod = function(method) {
+    var result;
+  
+    ['EventTarget', 'Node', 'Element', 'HTMLElement'].some(function(inter) {
+      var desc;
+
+      inter = window[inter];
+  
+      if (inter && (desc = Object.getOwnPropertyDescriptor(inter.prototype, method))) {
+        result = {
+          inter: inter,
+          desc: desc
+        };
+  
+        return true;
+      }
+    });
+  
+    return result;
+  },
+  setETMethod = function(method, value, desc) {
+    if (!commonDOMET) {
+      return setSeparateET(method, value, desc);
+    }
+
+    ['EventTarget', 'Node', 'Element', 'HTMLElement'].some(function(inter) {
+      inter = window[inter];
+      inter && (inter = inter.prototype);
+    
+      if (inter) {
+        var localDesc = desc || Object.getOwnPropertyDescriptor(inter, method);
+
+        Object.defineProperty(inter, method, {
+          value: value,
+          writable: localDesc.writable,
+          configurable: localDesc.configurable,
+          enumerable: localDesc.enumerable
+        });
+    
+        return true;
+      }
+    });
+  },
+  setSeparateET = function(method, value, desc) {
+    var tags = ["Link","Html","Body","Div","Form","Input","Image","Script","Head","Anchor","Style","Time","Option","Object","Output","Canvas","Select","UList","Meta","Base","DataList","Directory","Meter","Source","Button","Label","TableCol","Title","Media","Audio","Applet","TableCell","MenuItem","Legend","OList","TextArea","Quote","Menu","Unknown","BR","Progress","LI","FieldSet","Heading","Table","TableCaption","Span","FrameSet","Font","Frame","TableSection","OptGroup","Pre","Video","Mod","TableRow","Area","Data","Param","Template","IFrame","Map","DList","Paragraph","Embed","HR"];
+
+    tags.forEach(function(tag) {
+      tag = window['HTML' + tag + 'Element'];
+      tag && (tag = tag.prototype);
+
+      if (!tag) return;
+
+      var localDesc = desc || Object.getOwnPropertyDescriptor(tag, method);
+
+      Object.defineProperty(tag, method, {
+        value: value,
+        writable: localDesc.writable,
+        configurable: localDesc.configurable,
+        enumerable: localDesc.enumerable
+      });
+    });
   };
 
-  [
-    'addEventListener',
-    'removeEventListener',
-    'dispatchEvent'
-  ].forEach(function(method) {
-    this[method] = function() {
-      return this.getNode()[method].apply(this, arguments);
+  (function() {
+    var disabled = (function() {
+      var button = document.createElement('button'),
+        fieldset,
+        handlesEvents,
+        handlesEventsWrapped,
+        html = document.documentElement,
+        e;
+  
+      var TEST_EVENT_NAME = 'test';
+  
+      var eventHandler = function() {
+        handlesEvents = true;
+      },
+      wrappedEventHandler = function() {
+        handlesEventsWrapped = true;
+      };
+  
+      button.disabled = true;
+      html.appendChild(button);
+  
+      button.addEventListener(TEST_EVENT_NAME, eventHandler, false);
+  
+      e = document.createEvent('CustomEvent');
+      e.initEvent(TEST_EVENT_NAME, false, false);
+      button.dispatchEvent(e);
+      button.removeEventListener(TEST_EVENT_NAME, eventHandler, false);
+  
+      if (!handlesEvents) {
+        fieldset = document.createElement('fieldset');
+        fieldset.disabled = true;
+        fieldset.appendChild(button);
+        html.appendChild(fieldset);
+  
+        button.disabled = false;
+        button.addEventListener(TEST_EVENT_NAME, wrappedEventHandler, false);
+  
+        e = document.createEvent('CustomEvent');
+        e.initCustomEvent(TEST_EVENT_NAME, false, false, 1);
+        button.dispatchEvent(e);
+        button.removeEventListener(TEST_EVENT_NAME, wrappedEventHandler, false);
+  
+        html.removeChild(fieldset);
+      } else {
+        html.removeChild(button);
+        handlesEventsWrapped = true;
+      }
+  
+      return {
+        handlesEvents: handlesEvents,
+        handlesEventsWrapped: handlesEventsWrapped
+      };
+    }());
+  
+    if (disabled.handlesEvents) return;
+  
+    var native = getETMethod('dispatchEvent'),
+      nativeDispatch = native.desc,
+      blockedEvents = {
+        click: 1
+      };
+  
+    var dispatchEvent = function(event, handler, capture) {
+      var node = this,
+        disabledDesc,
+        disabledChanged,
+        disabledChangedVal = true,
+        disabledFix,
+        result;
+  
+      if (!node.disabled || blockedEvents.hasOwnProperty(event)) {
+        return nativeDispatch.value.apply(this, arguments);
+      }
+  
+      try {
+        disabledDesc = Object.getOwnPropertyDescriptor(
+            // Firefox
+            Object.getPrototypeOf(node),
+            'disabled'
+            // IE
+          ) || Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'disabled');
+      } catch (e) {
+        // old firefox with XPC problems
+        if (e.code === 0x8057000C ||
+            e.result === 0x8057000C) {
+          disabledDesc = {
+            enumerable: false,
+            configurable: true
+          };
+        }
+      }
+  
+      if (disabledDesc && /*disabledDesc.set && disabledDesc.get &&*/
+          !Object.getOwnPropertyDescriptor(node, 'disabled')) {
+        disabledFix = true;
+        node.disabled = false;
+        console.log('used fix');
+  
+        Object.defineProperty(node, 'disabled', {
+          enumerable: disabledDesc.enumerable,
+          configurable: disabledDesc.configurable,
+          set: function(val) {
+            disabledChanged = true;
+            disabledChangedVal = !!val;
+          },
+          get: function() {
+            return disabledChangedVal;
+          }
+        });
+      }
+     
+      result = nativeDispatch.value.apply(this, arguments);
+     
+      if (disabledFix) {
+        delete node.disabled;
+        node.disabled = disabledChanged ? disabledChangedVal : true;
+      }
+  
+      return result;
     };
-  }, events.EventTarget.prototype);
+
+    setETMethod('dispatchEvent', dispatchEvent, nativeDispatch);
+  
+    /*Object.defineProperty(native.inter.prototype, 'dispatchEvent', {
+      value: dispatchEvent,
+      writable: nativeDispatch.writable,
+      configurable: nativeDispatch.configurable,
+      enumerable: nativeDispatch.enumerable
+    });*/
+  
+    if (disabled.handlesEventsWrapped) return;
+  
+    // Here should be fix for elements wrapped with some others disabled elements
+    // <fieldset disabled>
+    //   <button disabled></button>
+    // </fieldset>
+  }());
 
   (function() {
     try {
@@ -81,10 +392,12 @@
     } catch (e) {
       window[event] && (window['_' + event] = window[event]);
       window[event] = function(type, dict) {
-        var init = params.map(function(prop) {
-          return dict[prop];
-        }),
+        var init,
         e = document.createEvent(event);
+
+        init = params.map(function(prop) {
+          return dict ? dict[prop] : null;
+        });
 
         init.unshift(type);
         e['init' + event].apply(e, init);
@@ -94,147 +407,138 @@
     }
   });
 
-  Sync.events = events;
+  [
+    'addEventListener',
+    'removeEventListener',
+    'dispatchEvent'
+  ].forEach(function(method) {
+    var native = getETMethod(method);
 
+    if (!native || !native.desc) return;
 
+    natives[method] = native.desc.value;
 
-  /*var events = Sync.events = {
-    EventTarget: function() {
+    setETMethod(method, function() {
+      var hook,
+        type,
+        arg = arguments[0];
 
-    },
-    EventListener: function(type, handler, capture, thisTarget) {
-      if (typeof handler === 'function' ||
-
-      this.type = type;
-      this.handler = handler;
-      this.capture = typeof capture === 'boolean' ? capture : false;
-      this.target = thisTarget;
-    },
-    constructors: {
-      Event: function() {
-        
-      }
-    },
-    createEvent: function(type) {
-      
-    },
-    LISTENERS_KEY: 'listeners'
-  },
-  types = {
-    long: function(value) {
-      return value | 0;
-    },
-    view: function(value) {
-      return dom.isView(value) ? value : null;
-    },
-    boolean: function(value) {
-      return typeof value === 'boolean' ? value : false;
-    },
-    short: function(value) {
-      return types.long(value);
-    },
-    ushort: function(value) {
-      return dom.types.long(value);
-    },
-    'unsigned short': function(value) {
-      return dom.types.long(value);
-    },
-    DOMString: function(value) {
-      return typeof value === 'string' ? value : '';
-    },
-    any: function(value) {
-      return value;
-    },
-    Element: function(object) {
-      return object && !!object.nodeType;
-    }
-  };
-
-  events.EventTarget.prototype = {
-    addEventListener: function(type, handler, useCapture) {
-      var thisTarget = this,
-        listeners;
-
-      if (!handler || !type || typeof type !== 'string') return;
-
-      if (typeof handler === 'object' && 'handleEvent' in handler) {
-        thisTarget = handler;
-        handler = handler.handleEvent;
+      if (typeof arg === 'object') {
+        type =  arg.type;
+      } else {
+        type = arg;
       }
 
-      if (typeof handler !== 'function') return;
-
-      handler = new events.EventListener(type,
-                                         handler,
-                                         useCapture,
-                                         thisTarget);
-
-      if (this.nodeType || this instanceof Window) {
-        // Bind events to DOM part objects
-        return null;
+      if (type && events.synced.hasOwnProperty(type) &&
+          (hook = events.synced[type]) && (hook = hook[method])) {
+        if (typeof hook === 'string') {
+          arguments[0] = hook;
+        } else {
+          return hook.apply(this, arguments);
+        }
       }
 
-      if (!(listeners = cache(this, events.LISTENERS_KEY)[type])) {
-        listeners = cache(this, events.LISTENERS_KEY)[type] = {
-          capture: [],
-          bubbling: []
+      return natives[method].apply(this, arguments);
+    }, native.desc);
+  });
+
+  if (!('onmouseenter' in document.createElement('div'))) {
+    Sync.each({
+      mouseenter: 'mouseover',
+      mouseleave: 'mouseout'
+    }, function(event, hook) {
+      events.synced[hook] = {
+        addEventListener: function(hook, callback, capture) {
+          events.addEvent(this, event, {
+            handler: function(e) {
+              var target = this,
+                relatedTarget = e.relatedTarget;
+
+              if (!relatedTarget || (target !== relatedTarget &&
+                   !target.contains(relatedTarget))) {
+                events.dispatchEvent(target, hook, {
+                  type: 'MouseEvent',
+                  options: Sync.extend({}, e, {
+                    bubbles: false,
+                    cancelable: false
+                  })
+                });
+              }
+            },
+            callback: callback,
+            capture: capture
+          });
+
+          events.natives.addEventListener.call(this, hook, callback, capture);
+        },
+        removeEventListener: function(hook, callback, capture) {
+          events.removeEvent(this, event, {
+            callback: callback,
+            capture: capture
+          });
+
+          events.natives.removeEventListener.call(this, hook, callback, capture);
+        }
+      };
+    });
+  }
+
+  if (!'oninput' in document.createElement('input')) {
+    events.synced.input = {
+      addEventListener: function(type, callback, capture) {
+        var self = this;
+
+        if (window.TextEvent && ((this.attachEvent && this.addEventListener) ||
+            (this.nodeName.toLowerCase() === 'textarea' && !('oninput' in this))) ||
+            (!'oninput' in this || !this.addEventListener)) {
+          bindKeyPress.call(this, type, callback, capture);
+        }
+
+        natives.addEventListener.call(this, type, callback, capture);
+      },
+      removeEventListener: function(type, callback, capture) {
+        unbindKeyPress.call(this, type, callback, capture);
+        natives.removeEventListener.call(this, type, callback, capture);
+      }
+    };
+
+    var bindKeyPress = function(hook, callback, capture) {
+      var self = this,
+        handler = function(e) {
+          events.dispatchEvent(this, hook, {
+            type: 'Event',
+            options: {
+              bubbles: false,
+              cancelable: false
+            }
+          });
         };
-      }
 
-      (useCapture ? listeners.capture : listeners.bubbling).push(handler);
-    },
-    dispatchEvent: function() {},
-    removeEventListener: function() {},
-    _: null
-  };
-
-  events.EventListener.prototype = {
-    fire: function(event) {
-      if (!(event instanceof events.Event)) {
-        throw new TypeError();
-      }
-
-      this.handler.call(this.target, event);
-    }
-  };*/
-
-  /*Event: {
-    CAPTURING_PHASE: 1,
-    AT_TARGET: 2,
-    BUBBLING_PHASE: 3,
-    initEvent: function(type, bubbles, cancelable){
-      instances.Event.call(this, type, {
-        "bubbles": bubbles,
-        "cancelable": cancelable
+      keypressBindings.forEach(function(event) {
+        events.addEvent(self, event, {
+          handler: handler,
+          callback: callback,
+          capture: capture
+        });
       });
     },
-    type: '',
-    target: null,
-    currentTarget: null,
-    eventPhase: 0,
-    eventFlags: 0,
-    STOP_PROPAGATION: 1,
-    STOP_IMMEDIATE_PROPAGATION: 2,
-    CANCELED: 4,
-    INITIALIZED: 8,
-    DISPATCH: 16,
-    stopPrapagation: function(){
-      this.eventFlags = this.eventFlags | this.STOP_PROPAGATION;
-    },
-    stopImmediatePropagation: function(){
-      this.eventFlags = this.eventFlags | this.STOP_IMMEDIATE_PROPAGATION | this.STOP_PROPAGATION;
-    },
-    bubbles: false,
-    cancelable: false,
-    preventDefault: function(){
-      if(this.cancelable){
-        (this.eventFlags = this.eventFlags | this.CANCELED);
-        //getters in not supported, so that passing true value manuality
-        this.defaultPrevented = true;
-      }
-    },
-    defaultPrevented: false,
-    isTrusted: false
-  }*/
+    unbindKeyPress = function(hook, callback, capture){
+      var self = this;
 
+      keypressBindings.forEach(function(event) {
+        events.removeEvent(self, event, {
+          callback: callback,
+          capture: capture
+        });
+      });
+    },
+    keypressBindings = [
+      'keydown',
+      'cut',
+      'paste',
+      'copy'
+    ];
+  };
+
+  Sync.events = events;
 }(this, this.document, Sync));

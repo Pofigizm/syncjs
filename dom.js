@@ -560,11 +560,10 @@
     }
   }
 
-  if (!('defaultView' in element) && element.ownerDocument &&
-      element.ownerDocument.parentWindow !== void 0) {
-    define(Element.prototype, 'defaultView', {
+  if (!('defaultView' in document) && document.parentWindow !== void 0) {
+    define(Document.prototype, 'defaultView', {
       get: function() {
-        return this.ownerDocument.parentWindow;
+        return this.parentWindow;
       }
     });
   }

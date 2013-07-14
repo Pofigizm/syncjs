@@ -32,11 +32,14 @@
       performance.now = performance.webkitNow || performance.msNow;
     }
 
+    if (!performance.now) {
+      return;
+    }
+
     return function() {
       return performance.now();
     };
-  }()) : Date.now;
-
+  }()) || Date.now : Date.now;
 
   // match vendor section
   {
@@ -549,7 +552,8 @@
   Sync.effects = {
     Transform: Transform,
     Transition: Transition,
-    Animation: Animation
+    Animation: Animation,
+    getTime: getTime
   };
 
   Sync.each(STYLE_MAP, function(used, normal) {

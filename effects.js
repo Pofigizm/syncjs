@@ -32,11 +32,14 @@
       performance.now = performance.webkitNow || performance.msNow;
     }
 
+    if (!performance.now) {
+      return Date.now;
+    }
+
     return function() {
       return performance.now();
     };
   }()) : Date.now;
-
 
   // match vendor section
   {
@@ -561,7 +564,8 @@
 
       style.marginTop = y + 'px';
       style.marginLeft = x + 'px';
-    }
+    },
+    getTime: getTime
   };
 
   Sync.each(STYLE_MAP, function(used, normal) {

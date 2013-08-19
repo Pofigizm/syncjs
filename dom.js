@@ -602,7 +602,24 @@
       !((prefix.prop + 'MatchesSelector') in Element.prototype) &&
       !('matches' in Element.prototype)) {
     define(Element.prototype, 'matchesSelector', {
-      value: function(selector) {
+      value: document.createElement('output').cloneNode(true).outerHTML === '<:output></:output>' ? function(selector) {
+        var frag = document.createDocumentFragment(),
+          tmp,
+          clone;
+
+        frag.appendChild(frag.createElement(this.tagName));
+
+        tmp = frag.appendChild(frag.createElement('div'));
+        clone = tmp.appendChild(frag.createElement(this.tagName));
+
+        clone.mergeAttributes(this);
+
+        tmp = !!tmp.querySelector(selector);
+        frag = null;
+        clone = null;
+
+        return tmp;
+      } : function(selector) {
         var tmp = document.createElement('div'),
           clone = this.cloneNode(false);
 

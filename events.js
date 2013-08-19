@@ -109,7 +109,7 @@
       NAMESPACE_INTERNAL: 'internal'
     },
     natives = events.natives,
-    commonDOMET = !HTMLDivElement.prototype.hasOwnProperty('addEventListener');
+    commonDOMET = !hasOwn.call(HTMLDivElement.prototype, 'addEventListener');
  
   var EVENTS_CALLBACKS_INDEX = 'events_callbacks_index',
     EVENTS_HANDLERS_STORE = 'events_handlers_store';
@@ -248,7 +248,7 @@
         handlesEventsWrapped: handlesEventsWrapped
       };
     }());
-  
+
     if (disabled.handlesEvents) return;
   
     var native = getETMethod('dispatchEvent'),
@@ -292,7 +292,9 @@
         disabledFix = true;
         node.disabled = false;
         console.log('used fix');
-  
+        // force update disabled property, wtf
+        node.offsetWidth;
+
         Object.defineProperty(node, 'disabled', {
           enumerable: disabledDesc.enumerable,
           configurable: disabledDesc.configurable,

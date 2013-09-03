@@ -10,6 +10,7 @@
     hasOwn = Object.prototype.hasOwnProperty,
     arrayProto = Array.prototype,
     slice = arrayProto.slice,
+    getKeys = Object.keys,
     Sync = window.Sync = function Sync() {},
 
     //iteration each own properties of passing obj
@@ -17,18 +18,30 @@
     //additionaly passing an third argument -
     // - slice of "each" function arguments
     //which starting at 2
-    each = Sync.each = function(obj, fn/*, thisValue*/) {
-      if (typeof fn !== 'function') return obj;
+    each = Sync.each = function(obj, fn, thisValue) {
+      if (typeof fn !== 'function' || !obj) return obj;
 
-      for (var key in obj) {
-        hasOwn.call(obj, key) && key !== 'prototype' &&
-        fn.call(arguments[2] || null, obj[key], key, obj);
+      var keys = getKeys(obj),
+        key,
+        i = 0,
+        len = keys.length;
+
+      if (thisValue) {
+        fn = fn.bind(thisValue);
+      }
+
+      for (; i < len; i++) {
+        key = keys[i];
+
+        if (key === 'prototype') continue;
+
+        fn(obj[key], key, obj);
       }
 
       return obj;
     },
 
-    //function for inhrerits some classes
+    //function for inherits some classes
     //expect one require argument - config
     //which describes the
     // - "parent" - constructor, that need to be inherited

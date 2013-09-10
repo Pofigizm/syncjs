@@ -24,7 +24,7 @@
           key: EVENTS_CALLBACKS_INDEX,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
         
         store = getCache({
@@ -32,7 +32,7 @@
           key: EVENTS_HANDLERS_STORE,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
 
         index = callbacks.indexOf(callback);
@@ -59,7 +59,7 @@
           key: EVENTS_CALLBACKS_INDEX,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
 
         store = getCache({
@@ -67,7 +67,7 @@
           key: EVENTS_HANDLERS_STORE,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
 
         index = callbacks.indexOf(params.callback);
@@ -109,7 +109,9 @@
       NAMESPACE_INTERNAL: 'internal'
     },
     natives = events.natives,
-    commonDOMET = !hasOwn.call(HTMLDivElement.prototype, 'addEventListener');
+    commonDOMET = !hasOwn.call(HTMLDivElement.prototype, 'addEventListener'),
+    ETOwnBuggy = false,
+    ETList = ['EventTarget', 'Node', 'Element', 'HTMLElement'];
  
   var EVENTS_CALLBACKS_INDEX = 'events_callbacks_index',
     EVENTS_HANDLERS_STORE = 'events_handlers_store';
@@ -135,7 +137,7 @@
   getETMethod = function(method) {
     var result;
   
-    ['EventTarget', 'Node', 'Element', 'HTMLElement'].some(function(inter) {
+    ETList.some(function(inter) {
       var desc;
 
       inter = window[inter];
@@ -157,7 +159,7 @@
       return setSeparateET(method, value, desc);
     }
 
-    ['EventTarget', 'Node', 'Element', 'HTMLElement'].some(function(inter) {
+    ETList.forEach(function(inter) {
       inter = window[inter];
       inter && (inter = inter.prototype);
     
@@ -170,8 +172,6 @@
           configurable: localDesc.configurable,
           enumerable: localDesc.enumerable
         });
-    
-        return true;
       }
     });
   },
@@ -194,6 +194,20 @@
       });
     });
   };
+
+  window.EventTarget && (function() {
+    var add = EventTarget.prototype.addEventListener,
+      remove = EventTarget.prototype.removeEventListener,
+      handler = function() {};
+
+    try {
+      add.call(document, 'ettest', handler, false);
+      remove.call(document, 'ettest', handler, false);
+    } catch (e) {
+      ETOwnBuggy = true;
+      ETList.push(ETList.shift());
+    }
+  }());
 
   (function() {
     var disabled = (function() {

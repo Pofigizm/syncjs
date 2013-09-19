@@ -78,6 +78,45 @@
           node.removeEventListener(event, storeData.handler, capture);
         }
       },
+      removeEventAll: function(node, event, params) {
+        var capture = params.capture,
+          namespace = (params.namespace || '') + '';
+
+        var remove = function(capture) {
+          var callbacks,
+            store;
+
+          callbacks = getCache({
+            node: node,
+            key: EVENTS_CALLBACKS_INDEX,
+            namespace: namespace,
+            event: event,
+            capture: capture
+          });
+
+          store = getCache({
+            node: node,
+            key: EVENTS_HANDLERS_STORE,
+            namespace: namespace,
+            event: event,
+            capture: capture
+          });
+
+          store.forEach(function(storeData, i) {
+            node.removeEventListener(event, storeData.handler, capture);
+          });
+
+          store.splice(0, store.length);
+          callbacks.splice(0, callbacks.length);
+        };
+
+        if (capture == null) {
+          remove(true);
+          remove(false);
+        } else {
+          remove(capture);
+        }
+      },
       dispatchEvent: function(node, event, params) {
         var defaultAction = params.defaultAction,
           inter = window[params.type || 'CustomEvent'];

@@ -24,7 +24,7 @@
           key: EVENTS_CALLBACKS_INDEX,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
         
         store = getCache({
@@ -32,7 +32,7 @@
           key: EVENTS_HANDLERS_STORE,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
 
         index = callbacks.indexOf(callback);
@@ -59,7 +59,7 @@
           key: EVENTS_CALLBACKS_INDEX,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
 
         store = getCache({
@@ -67,7 +67,7 @@
           key: EVENTS_HANDLERS_STORE,
           namespace: namespace,
           event: event,
-          captrue: capture
+          capture: capture
         });
 
         index = callbacks.indexOf(params.callback);
@@ -76,6 +76,45 @@
           callbacks.splice(index, 1);
           store.splice(index, 1);
           node.removeEventListener(event, storeData.handler, capture);
+        }
+      },
+      removeEventAll: function(node, event, params) {
+        var capture = params.capture,
+          namespace = (params.namespace || '') + '';
+
+        var remove = function(capture) {
+          var callbacks,
+            store;
+
+          callbacks = getCache({
+            node: node,
+            key: EVENTS_CALLBACKS_INDEX,
+            namespace: namespace,
+            event: event,
+            capture: capture
+          });
+
+          store = getCache({
+            node: node,
+            key: EVENTS_HANDLERS_STORE,
+            namespace: namespace,
+            event: event,
+            capture: capture
+          });
+
+          store.forEach(function(storeData, i) {
+            node.removeEventListener(event, storeData.handler, capture);
+          });
+
+          store.splice(0, store.length);
+          callbacks.splice(0, callbacks.length);
+        };
+
+        if (capture == null) {
+          remove(true);
+          remove(false);
+        } else {
+          remove(capture);
         }
       },
       dispatchEvent: function(node, event, params) {
@@ -109,7 +148,9 @@
       NAMESPACE_INTERNAL: 'internal'
     },
     natives = events.natives,
-    commonDOMET = !HTMLDivElement.prototype.hasOwnProperty('addEventListener');
+    commonDOMET = !hasOwn.call(HTMLDivElement.prototype, 'addEventListener'),
+    ETOwnBuggy = false,
+    ETList = ['EventTarget', 'Node', 'Element', 'HTMLElement'];
  
   var EVENTS_CALLBACKS_INDEX = 'events_callbacks_index',
     EVENTS_HANDLERS_STORE = 'events_handlers_store';
@@ -135,7 +176,7 @@
   getETMethod = function(method) {
     var result;
   
-    ['EventTarget', 'Node', 'Element', 'HTMLElement'].some(function(inter) {
+    ETList.some(function(inter) {
       var desc;
 
       inter = window[inter];
@@ -157,7 +198,7 @@
       return setSeparateET(method, value, desc);
     }
 
-    ['EventTarget', 'Node', 'Element', 'HTMLElement'].some(function(inter) {
+    ETList.forEach(function(inter) {
       inter = window[inter];
       inter && (inter = inter.prototype);
     
@@ -170,8 +211,6 @@
           configurable: localDesc.configurable,
           enumerable: localDesc.enumerable
         });
-    
-        return true;
       }
     });
   },
@@ -194,6 +233,20 @@
       });
     });
   };
+
+  window.EventTarget && (function() {
+    var add = EventTarget.prototype.addEventListener,
+      remove = EventTarget.prototype.removeEventListener,
+      handler = function() {};
+
+    try {
+      add.call(document, 'ettest', handler, false);
+      remove.call(document, 'ettest', handler, false);
+    } catch (e) {
+      ETOwnBuggy = true;
+      ETList.push(ETList.shift());
+    }
+  }());
 
   (function() {
     var disabled = (function() {
@@ -248,7 +301,7 @@
         handlesEventsWrapped: handlesEventsWrapped
       };
     }());
-  
+
     if (disabled.handlesEvents) return;
   
     var native = getETMethod('dispatchEvent'),
@@ -292,7 +345,9 @@
         disabledFix = true;
         node.disabled = false;
         console.log('used fix');
-  
+        // force update disabled property, wtf
+        node.offsetWidth;
+
         Object.defineProperty(node, 'disabled', {
           enumerable: disabledDesc.enumerable,
           configurable: disabledDesc.configurable,

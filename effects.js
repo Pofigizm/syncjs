@@ -33,7 +33,7 @@
     }
 
     if (!performance.now) {
-      return;
+      return Date.now;
     }
 
     return function() {
@@ -77,12 +77,6 @@
     })) {
       transformProperty = null;
     }
-  }
-
-  if (/*!transitionProperty ||*/ !transformProperty) {
-    style = null;
-    return;
-    //throw new Error('Browser does not supported CSS effects');
   }
 
   var TRANSFORM_2D_MAP = {
@@ -253,7 +247,7 @@
   };
 
   // Transitions section
-  {
+  if (transitionProperty) {
     var Transition = function(params) {
       if (params) {
         this.params = params;
@@ -469,90 +463,108 @@
   }
 
   // Transform section
+  if (transformProperty) {
+    var Transform = function(element, map) {
+      var stack;
 
-  var Transform = function(map) {
-    var stack = this.stack = [];
-
-    Sync.each(map, function(val, key) {
-      if (hasOwn.call(Transform, key)) {
-        val = Transform[key].apply(Transform, isArray(val) ? val : [val]);
-        stack.push(val);
+      if (element && element.nodeType === Node.ELEMENT_NODE) {
+        // need to real parse values
+        stack = this.stack = [element.style.transform];
+      } else {
+        stack = this.stack = [];
+        map = element;
+        element = null;
       }
-    });
 
-    // Object.keys(map).forEach(function(name) {
-    //   stack
-    //     .push(name + '(' + (map[name] + '')
-    //     .replace(/\s*(,)|$\s*/g, TRANSFORM_2D_MAP[name.toLowerCase()] + '$1') + ')');
-    // });
-  };
-
-  // 2d transforms
-
-  [{
-    key: 'translate',
-    len: 2
-  }, {
-    key: 'translateX',
-    len: 1
-  }, {
-    key: 'translateY',
-    len: 1
-  }, {
-    key: 'rotate',
-    len: 1
-  }, {
-    key: 'scale',
-    len: 2
-  }, {
-    key: 'scaleX',
-    len: 1
-  }, {
-    key: 'scaleY',
-    len: 1
-  }, {
-    key: 'skew',
-    len: 2
-  }, {
-    key: 'skewX',
-    len: 1
-  }, {
-    key: 'skewY',
-    len: 1
-  }, {
-    key: 'matrix',
-    len: 6
-  }].forEach(function(prop) {
-    var key = prop.key,
-      len = prop.len;
-
-    var transform = Transform[key] = function() {
-      var args = slice.call(arguments, 0, len).map(function(arg) {
-        return arg !== void 0 ?
-          parseFloat(arg) + TRANSFORM_2D_MAP[key.toLowerCase()] : 0;
+      Sync.each(map, function(val, key) {
+        if (hasOwn.call(Transform, key)) {
+          val = Transform[key].apply(Transform, isArray(val) ? val : [val]);
+          stack.push(val);
+        }
       });
 
-      return key + '(' + args.join(',') + ')';
+      // Object.keys(map).forEach(function(name) {
+      //   stack
+      //     .push(name + '(' + (map[name] + '')
+      //     .replace(/\s*(,)|$\s*/g, TRANSFORM_2D_MAP[name.toLowerCase()] + '$1') + ')');
+      // });
     };
 
-    Transform.prototype[key] = function() {
-      this.stack.push(transform.apply(null, arguments));
-      return this;
+    // 2d transforms
+
+    [{
+      key: 'translate',
+      len: 2
+    }, {
+      key: 'translateX',
+      len: 1
+    }, {
+      key: 'translateY',
+      len: 1
+    }, {
+      key: 'rotate',
+      len: 1
+    }, {
+      key: 'scale',
+      len: 2
+    }, {
+      key: 'scaleX',
+      len: 1
+    }, {
+      key: 'scaleY',
+      len: 1
+    }, {
+      key: 'skew',
+      len: 2
+    }, {
+      key: 'skewX',
+      len: 1
+    }, {
+      key: 'skewY',
+      len: 1
+    }, {
+      key: 'matrix',
+      len: 6
+    }].forEach(function(prop) {
+      var key = prop.key,
+        len = prop.len;
+
+      var transform = Transform[key] = function() {
+        var args = slice.call(arguments, 0, len).map(function(arg) {
+          return arg !== void 0 ?
+            parseFloat(arg) + TRANSFORM_2D_MAP[key.toLowerCase()] : 0;
+        });
+
+        return key + '(' + args.join(',') + ')';
+      };
+
+      Transform.prototype[key] = function() {
+        this.stack.push(transform.apply(null, arguments));
+        return this;
+      };
+    });
+
+    Transform.prototype.toString = function() {
+      return this.stack.join(' ');
     };
-  });
 
-  Transform.prototype.toString = function() {
-    return this.stack.join(' ');
-  };
-
-  Transform.prototype.apply = function(element) {
-    element.style[transformProperty] = this;
-  };
+    Transform.prototype.apply = function(element) {
+      element.style[transformProperty] = this;
+    };
+  }
 
   Sync.effects = {
     Transform: Transform,
     Transition: Transition,
     Animation: Animation,
+    translate: Transform ? function(element, x, y) {
+      element.style.transform = Transform.translate(x, y);
+    } : function(element, x, y) {
+      var style = element.style;
+
+      style.marginTop = y + 'px';
+      style.marginLeft = x + 'px';
+    },
     getTime: getTime
   };
 
@@ -569,8 +581,7 @@
       set: function(val) {
         this[used] = val;
       },
-      enumerable: usedDict.enumerable,
-      configurable: usedDict.configurable
+      configurable: usedDict ? usedDict.configurable : true
     });
   });
 
@@ -678,18 +689,3 @@
 
   }());
 }(this));
-/*
-self.element.style.transition = new Transition(['left', ['top', 500]]);
-
-Transition.run(self.element, {
-  left: [
-    [50, 300, 'ease', function() {
-
-    }],
-    [100, 200, function() {
-
-    }]
-  ],
-  top: [50, function() {}],
-  bottom: 30
-});*/

@@ -212,19 +212,6 @@
   }
 
   var dom = Sync.dom = {
-    cache: Sync.cache,
-    dataset: function(node, name, value) {
-      if (!node || !name) return null;
-
-      name = 'data-' + name.replace(R_CAMEL_2_CSS, camel2css);
-
-      if (value !== void 0 || value === null) {
-        node.setAttribute(name, value);
-        return value;
-      }
-
-      return node.hasAttribute(name) ? node.getAttribute(name) : void 0;
-    },
     inTree: function(elem) {
       return elem && elem.nodeType &&
         (elem.parentNode ? ((elem = elem.parentNode).nodeType ===
@@ -528,26 +515,28 @@
     if ('runtimeStyle' in element) {
       define(Element.prototype, 'hidden', {
         get: function() {
-          return this.runtimeStyle.display === 'none';
+          // return this.runtimeStyle.display === 'none';
+          return this.hasAttribute('hidden');
         },
         set: function(value) {
-          var style = this.runtimeStyle;
+          // need test in ie
+          /*var style = this.runtimeStyle;
 
           if (!value && style.display === 'none') {
             style.display = '';
           } else if (value && style.display !== 'none') {
             style.display = 'none';
-          }
+          }*/
         }
       });
     } else {
       define(Element.prototype, 'hidden', {
         get: function() {
-          return this.getAttribute('hidden') != null;
+          return this.hasAttribute('hidden');
         },
         set: function(value) {
           if (value) {
-            this.setAttribute('hidden', 'hidden');
+            this.setAttribute('hidden', '');
           } else {
             this.removeAttribute('hidden');
           }

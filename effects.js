@@ -27,7 +27,7 @@
   hasOwn = Object.prototype.hasOwnProperty,
   isArray = Array.isArray,
   slice = Array.prototype.slice,
-  getTime = window.performance ? (function() {
+  getTime = window.performance && (function() {
     if (!performance.now) {
       performance.now = performance.webkitNow || performance.msNow;
     }
@@ -39,7 +39,7 @@
     return function() {
       return performance.now();
     };
-  }()) || Date.now : Date.now;
+  }()) || Date.now;
 
   // match vendor section
   {
@@ -575,6 +575,108 @@
   });
 
   style = null;
+
+  // timeline
+  (function() {
+
+
+    window.Timeline = function() {};
+
+    Timeline.prototype = {
+      get currentTime() {
+
+      },
+      play: function() {},
+      getCurrentPlayers: function() {},
+      toTimelineTime: function() {}
+    };
+
+    window.Player = function() {};
+
+    Player.prototype = {
+      source: null,
+      get timeline() {},
+      startTime: null,
+      currentTime: null,
+      playbackRate: 1,
+      paused: false
+    };
+
+    window.TimedItem = function() {};
+
+    TimedItem.prototype = {
+      get localTime() {},
+      get currentIteration() {},
+      get specified() {},
+      get startTime() {},
+      get iterationDuration() {},
+      get activeDuration() {},
+      get endTime() {},
+      get parent() {},
+      get previousSibling() {},
+      get nextSibling() {},
+      before: function() {},
+      after: function() {},
+      replace: function() {},
+      remove: function() {},
+      get player() {},
+      onstart: null,
+      oniteration: null,
+      onend: null,
+      oncancel: null
+    };
+
+    window.Timing = function() {};
+
+
+    Timing.prototype = {
+      startDelay: 0,
+      fillMode: null,
+      iterationStart: null,
+      iterationCount: null,
+      iterationDuration: null,
+      activeDuration: null,
+      playbackRate: null,
+      direction: null,
+      timingFunction: null
+    };
+
+    window.TimingInput = function() {};
+
+    TimingInput.prototype = {
+      startDelay: 0,
+      fillMode: 'forwards',
+      iterationStart: 0,
+      iterationCount: 1,
+      iterationDuration: 'auto',
+      activeDuration: 'auto',
+      playbackRate: 1,
+      direction: 'normal',
+      timingFunction: 'linear'
+    };
+
+    window.TimingGroup = function() {};
+    TimingGroup.prototype = Sync.extend(Object.create(TimedItem.prototype), {
+      get duration() {},
+      get firstChild() {},
+      get lastChild() {},
+      prepend: function() {},
+      append: function() {}
+    });
+
+    window.TimedItemList = function() {};
+    TimedItemList.prototype = {
+      get length() {},
+      get item() {}
+    };
+
+    window.Animation = function(element, effect, timing) {
+      this.target = element;
+      this.effect = effect;
+    };
+
+
+  }());
 }(this));
 /*
 self.element.style.transition = new Transition(['left', ['top', 500]]);

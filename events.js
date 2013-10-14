@@ -164,9 +164,9 @@
       return null;
     }
 
-    data = data.hasOwnProperty(namespace) ? data[namespace]  : (data[namespace] = {});
+    data = hasOwn.call(data, namespace) ? data[namespace]  : (data[namespace] = {});
 
-    data = data.hasOwnProperty(event) ? data[event] : (data[event] = {
+    data = hasOwn.call(data, event) ? data[event] : (data[event] = {
       capture: [],
       bubbling: []
     });

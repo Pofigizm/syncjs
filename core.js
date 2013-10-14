@@ -12,12 +12,6 @@
     slice = arrayProto.slice,
     getKeys = Object.keys,
     Sync = window.Sync = function Sync() {},
-
-    //iteration each own properties of passing obj
-    //and call fn with key/value arguments
-    //additionaly passing an third argument -
-    // - slice of "each" function arguments
-    //which starting at 2
     each = Sync.each = function(obj, fn, thisValue) {
       if (typeof fn !== 'function' || !obj) return obj;
 

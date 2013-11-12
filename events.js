@@ -4,6 +4,7 @@
   if (!document.addEventListener) return;
 
   var cache = Sync.cache,
+    define = Object.defineProperty,
     hasOwn = Object.prototype.hasOwnProperty,
     events = {
       synced: {},
@@ -84,7 +85,7 @@
 
         var remove = function(capture) {
           var callbacks,
-            store;
+          store;
 
           callbacks = getCache({
             node: node,
@@ -164,16 +165,16 @@
       return null;
     }
 
-    data = hasOwn.call(data, namespace) ? data[namespace]  : (data[namespace] = {});
+    data = data.hasOwnProperty(namespace) ? data[namespace]  : (data[namespace] = {});
 
-    data = hasOwn.call(data, event) ? data[event] : (data[event] = {
+    data = data.hasOwnProperty(event) ? data[event] : (data[event] = {
       capture: [],
       bubbling: []
     });
 
     return params.capture ? data.capture : data.bubbling;
   },
-  getETMethod = function(method) {
+  getDOMET = function(method) {
     var result;
   
     ETList.some(function(inter) {
@@ -193,9 +194,9 @@
   
     return result;
   },
-  setETMethod = function(method, value, desc) {
+  setDOMET = function(method, value, desc) {
     if (!commonDOMET) {
-      return setSeparateET(method, value, desc);
+      return setSeparateDOMET(method, value, desc);
     }
 
     ETList.forEach(function(inter) {
@@ -214,7 +215,7 @@
       }
     });
   },
-  setSeparateET = function(method, value, desc) {
+  setSeparateDOMET = function(method, value, desc) {
     var tags = ["Link","Html","Body","Div","Form","Input","Image","Script","Head","Anchor","Style","Time","Option","Object","Output","Canvas","Select","UList","Meta","Base","DataList","Directory","Meter","Source","Button","Label","TableCol","Title","Media","Audio","Applet","TableCell","MenuItem","Legend","OList","TextArea","Quote","Menu","Unknown","BR","Progress","LI","FieldSet","Heading","Table","TableCaption","Span","FrameSet","Font","Frame","TableSection","OptGroup","Pre","Video","Mod","TableRow","Area","Data","Param","Template","IFrame","Map","DList","Paragraph","Embed","HR"];
 
     tags.forEach(function(tag) {
@@ -232,6 +233,48 @@
         enumerable: localDesc.enumerable
       });
     });
+  },
+  getETCustom = function(_interface, method) {
+    var desc;
+
+    _interface = window[_interface];
+    
+    desc = _interface &&
+      (desc = Object.getOwnPropertyDescriptor(_interface.prototype, method));
+
+    return {
+      inter: _interface,
+      desc: desc
+    };
+  },
+  setETCustom = function(_interface, method, value, desc) {
+    _interface = window[_interface];
+    _interface && (_interface = _interface.prototype);
+    
+    if (!_interface) return;
+
+    desc || (desc = Object.getOwnPropertyDescriptor(_interface, method));
+
+    Object.defineProperty(_interface, method, {
+      value: value,
+      writable: desc.writable,
+      configurable: desc.configurable,
+      enumerable: desc.enumerable
+    });
+  },
+  setET = function(_interface, prop, value, desc) {
+    if (_interface.toUpperCase() === 'DOM') {
+      setDOMET(prop, value, desc);
+    } else {
+      setETCustom(_interface, prop, value, desc);
+    }
+  },
+  getET = function(_interface, prop) {
+    if (_interface.toUpperCase() === 'DOM') {
+      return getDOMET(prop);
+    } else {
+      return getETCustom(_interface, prop);
+    }
   };
 
   window.EventTarget && (function() {
@@ -304,13 +347,13 @@
 
     if (disabled.handlesEvents) return;
   
-    var native = getETMethod('dispatchEvent'),
+    var native = getDOMET('dispatchEvent'),
       nativeDispatch = native.desc,
       blockedEvents = {
         click: 1
       };
   
-    var dispatchEvent = function(event, handler, capture) {
+    var dispatchEvent = function(event) {
       var node = this,
         disabledDesc,
         disabledChanged,
@@ -318,8 +361,9 @@
         disabledFix,
         result;
   
-      if (!node.disabled || blockedEvents.hasOwnProperty(event)) {
-        return nativeDispatch.value.apply(this, arguments);
+      if (!node.disabled ||
+        (event && event.type && blockedEvents.hasOwnProperty(event.type))) {
+        return nativeDispatch.value.call(this, event);
       }
   
       try {
@@ -371,7 +415,7 @@
       return result;
     };
 
-    setETMethod('dispatchEvent', dispatchEvent, nativeDispatch);
+    setDOMET('dispatchEvent', dispatchEvent, nativeDispatch);
   
     /*Object.defineProperty(native.inter.prototype, 'dispatchEvent', {
       value: dispatchEvent,
@@ -386,6 +430,97 @@
     // <fieldset disabled>
     //   <button disabled></button>
     // </fieldset>
+  }());
+
+  if (window.Event &&
+    !('stopImmediatePropagation' in Event.prototype)) (function() {
+    var stopDesc = Object.getOwnPropertyDescriptor(Event.prototype, 'stopPropagation');
+
+    var SIP_FIX_KEY = 'events_sip_fix_key',
+      SIP_FIX_KEY_INDEX = 'events_sip_fix_key_index';
+
+    define(Event.prototype, 'stopImmediatePropagation', {
+      value: function() {
+        if (this._ignoreListeners) return;
+
+        define(this, '_ignoreListeners', {
+          value: true,
+          writable: false,
+          enumerable: false,
+          configurable: false
+        });
+      },
+      writable: stopDesc.writable,
+      enumerable: stopDesc.enumerable,
+      configurable: stopDesc.configurable
+    });
+
+    ['DOM', 'XMLHttpRequest'].forEach(function(_interface) {
+      var addDesc = getET(_interface, 'addEventListener').desc,
+        rmDesc = getET(_interface, 'removeEventListener').desc;
+
+      setET('addEventListener', function(event, listener, capture) {
+        var cached = cache(this),
+          store = cached[SIP_FIX_KEY] || (cached[SIP_FIX_KEY] = {}),
+          index = cached[SIP_FIX_KEY_INDEX] || (cached[SIP_FIX_KEY_INDEX] = {}),
+          indexed,
+          stored;
+
+        capture = !!capture;
+
+        store = store[event] || (store[event] = []);
+        index = index[event] || (index[event] = []);
+
+        if ((indexed = index.indexOf(listener)) !== -1) {
+          stored = store[indexed];
+
+          if (hasOwn.call(stored, capture)) {
+            return addDesc.value.call(this, event, listener, capture);
+          }
+        } else {
+          stored = {};
+          indexed = index.push(listener) - 1;
+          store.push(stored);
+        }
+
+        var wrap = function(e) {
+          if (e._ignoreListeners) return;
+          listener.call(this, e);
+        };
+
+        stored[capture] = wrap;
+        return addDesc.value.call(this, event, wrap, capture);
+      }, addDesc);
+
+      setET('removeEventListener', function(event, listener, capture) {
+        var cached = cache(this),
+          store = cached[SIP_FIX_KEY] || (cached[SIP_FIX_KEY] = {}),
+          index = cached[SIP_FIX_KEY_INDEX] || (cached[SIP_FIX_KEY_INDEX] = {}),
+          indexed,
+          stored;
+
+        capture = !!capture;
+
+        store = store[event] || (store[event] = []);
+        index = index[event] || (index[event] = []);
+
+        if ((indexed = index.indexOf(listener)) !== -1) {
+          stored = store[indexed];
+
+          if (hasOwn.call(stored, capture)) {
+            if (!hasOwn.call(stored, !capture)) {
+              index.splice(indexed, 1);
+              store.splice(indexed, 1);
+            }
+
+            listener = stored[capture];
+            delete stored[capture];
+          }
+        }
+
+        return rmDesc.value.call(this, event, listener, capture);
+      }, rmDesc);
+    });
   }());
 
   (function() {
@@ -467,13 +602,13 @@
     'removeEventListener',
     'dispatchEvent'
   ].forEach(function(method) {
-    var native = getETMethod(method);
+    var native = getDOMET(method);
 
     if (!native || !native.desc) return;
 
     natives[method] = native.desc.value;
 
-    setETMethod(method, function() {
+    setDOMET(method, function() {
       var hook,
         type,
         arg = arguments[0];

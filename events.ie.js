@@ -322,6 +322,22 @@
       remove: function(type, target, config, handler) {
         target.defaultView.detachEvent('onload', handler);
       }
+    },
+    readystatechange: {
+      type: 'Event',
+      bubbles: false,
+      cancelable: false,
+      targets: {
+        XMLHttpRequest: true
+      }
+    },
+    timeout: {
+      type: 'Event',
+      bubbles: false,
+      cancelable: false,
+      targets: {
+        XMLHttpRequest: true
+      }
     }
     // wheel
   },
@@ -1044,6 +1060,7 @@
     [
       Element.prototype,
       HTMLDocument.prototype,
+      // XMLHttpRequest.prototype,
       window
     ].forEach(function(object) {
       define(object, key, prop);

@@ -68,7 +68,13 @@
             (to[key] && overwrite || !to[key])) {
 
           if (!isArray(to[key]) && !isObject(to[key])) {
-            to[key] = isArray(value) ? [] : {};
+            if (isArray(value)) {
+              to[key] = [];
+            } else if (value instanceof RegExp || typeof value === 'regexp') {
+              to[key] = new RegExp(value);
+            } else {
+              to[key] = {};
+            }
           }
 
           extend(recurse, to[key], value, overwrite);

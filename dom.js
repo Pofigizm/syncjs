@@ -211,7 +211,7 @@
     }());
   }
 
-  var dom = Sync.dom = {
+  /*var dom = Sync.dom = {
     inTree: function(elem) {
       return elem && elem.nodeType &&
         (elem.parentNode ? ((elem = elem.parentNode).nodeType ===
@@ -220,7 +220,7 @@
     isView: function(view) {
       return view && view.setTimeout && view.clearTimeout;
     }
-  };
+  };*/
 
   if (!document.head) {
     Object.defineProperty(document, 'head', {
@@ -234,23 +234,30 @@
     try {
       define(window.location, 'origin', {
         get: function() {
-          return this.protocol + '//' + this.host + this.port;
+          return this.protocol + '//' + this.host;
         }
       });
     } catch (e) {
       window.location.origin =
-        window.location.protocol + '//' + window.location.host + window.location.port;
+        window.location.protocol + '//' + window.location.host;
     }
   }
 
   if (!('origin' in document.createElement('a'))) {
-    define(window.HTMLAnchorElement.prototype, 'origin', {
-      get: function() {
-        return this.protocol + '//' + this.host + this.port;
-      }
+    [
+      'HTMLAnchorElement',
+      'HTMLLinkElement',
+      'HTMLAreaElement'
+    ].forEach(function(key) {
+      define(window[key].prototype, 'origin', {
+        get: function() {
+          return this.protocol + '//' + this.host;
+        }
+      });
     });
   }
 
+  // IE8
   if (!('innerWidth' in window)) {
     Object.defineProperties(window, {
       innerWidth: {
@@ -274,6 +281,7 @@
     });
   }
 
+  // IE8 also
   try {
     var nodeListSlice = slice.call(document.querySelectorAll('html'), 0);
   } catch (e) {
@@ -354,7 +362,8 @@
         return html;
       },
       set: function(value) {
-
+        this.insertAdjacentHTML('beforebegin', value);
+        this.remove();
       }
     });
   }
@@ -512,6 +521,7 @@
   }
 
   if (!('hidden' in element)) {
+    // IE8 wtf
     if ('runtimeStyle' in element) {
       define(Element.prototype, 'hidden', {
         get: function() {
@@ -557,33 +567,33 @@
     });
   }
 
+  
+
   // ---
   // Copy-pated from X-tags repo by Mozilla
   // http://github.com/mozilla/x-tag
   var prefix = Sync.prefix = (function() {
-      var styles = window.getComputedStyle(document.documentElement),
-        pre,
-        dom;
+    var styles = window.getComputedStyle(document.documentElement),
+      pre,
+      dom;
 
-        try {
-          pre = (slice.call(styles).join('')
-                  .match(/-(moz|webkit|ms)-/) || (styles.OLink === '' && ['', 'o']))[1];
-        } catch (e) {
-          pre = 'ms';
-        }
+      try {
+        pre = (slice.call(styles).join('')
+                .match(/-(moz|webkit|ms)-/) || (styles.OLink === '' && ['', 'o']))[1];
+      } catch (e) {
+        pre = 'ms';
+      }
 
-        dom = pre === 'ms' ? pre.toUpperCase() : pre;
+      dom = pre === 'ms' ? pre.toUpperCase() : pre;
 
-      return {
-        dom: dom,
-        prop: dom.toLowerCase(),
-        lowercase: pre,
-        css: '-' + pre + '-',
-        js: pre[0].toUpperCase() + pre.slice(1)
-      };
-    })();
-
-
+    return {
+      dom: dom,
+      prop: dom.toLowerCase(),
+      lowercase: pre,
+      css: '-' + pre + '-',
+      js: pre[0].toUpperCase() + pre.slice(1)
+    };
+  })();
 
   // HTML5
 
@@ -693,6 +703,7 @@
     }
   });
 
+  // IE8 hellow
   if (!('cssFloat' in document.documentElement.style) &&
     'styleFloat' in document.documentElement.style &&
     'CSSStyleDeclaration' in window) {
@@ -705,47 +716,4 @@
       }
     });
   }
-
-/*
-  var R_PROGID_FILTER = /(?:^|\s)progid:DXImageTransform\.Microsoft\.Alpha\((.*?)\)/i,
-    R_ALPHA_FILTER = /(?:^|\s)alpha\((.*?)\)/i;
-
-  if (!('opacity' in document.documentElement.style) &&
-    'filter' in document.documentElement.style &&
-    'CSSStyleDeclaration' in window) {
-
-      define(CSSStyleDeclaration.prototype, 'opacity', {
-        get: function() {
-
-          var match = (R_PROGID_FILTER.exec(this.filter) || R_ALPHA_FILTER.exec(this.filter) ||
-            ['', this._opacity || ''])[1];*/
-
-          //match = match && match.split(/\s*,\s*/).filter(function(value) {
-          //  return !value.trim().indexOf('opacity');
-          //})[0].split('=')[1];
-
-/*
-          if (match && !isNaN(match)) {
-            return (match / 100).toFixed(2) + '';
-          } else {
-            return '';
-          }
-
-        },
-        set: function(value) {
-          if (!isFinite(value)) return;
-
-          var filter = this.filter.replace(R_ALPHA_FILTER, '').replace(R_PROGID_FILTER, '');
-          this.filter = filter + ' alpha(opacity=' + value * 100 + ')';
-          this.zoom = 1;
-
-        },
-        configurable: true,
-        enumerable: true
-      });
-
-    
-  }*/
-
-
 }(this, document, Sync));

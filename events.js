@@ -15,8 +15,13 @@
           store,
           index,
           capture = params.capture,
-          callback = params.callback,
-          namespace = (params.namespace || '') + '';
+          callback = params.callback || params.handler,
+          namespace = (params.namespace || '') + '',
+          method = params.method;
+
+        if (namespace === events.NAMESPACE_NATIVE && !method) {
+          method = natives.addEventListener;
+        }
 
         //if ((node + '').toLowerCase().indexOf('window') !== -1) return;
 
@@ -45,7 +50,11 @@
         callbacks.push(callback);
         store.push(params);
 
-        node.addEventListener(event, params.handler, !!capture);
+        if (method) {
+          method.call(node, event, params.handler, !!capture);
+        } else {
+          node.addEventListener(event, params.handler, !!capture);
+        }
       },
       removeEvent: function(node, event, params) {
         var callbacks,
@@ -53,7 +62,12 @@
           index,
           capture = params.capture,
           storeData,
-          namespace = (params.namespace || '') + '';
+          namespace = (params.namespace || '') + '',
+          method = params.method;
+
+        if (namespace === events.NAMESPACE_NATIVE && !method) {
+          method = natives.removeEventListener;
+        }
 
         callbacks = getCache({
           node: node,
@@ -73,15 +87,27 @@
 
         index = callbacks.indexOf(params.callback);
 
-        if (index !== -1 && (storeData = store[index])) {
-          callbacks.splice(index, 1);
-          store.splice(index, 1);
+        if (index === -1 || !(storeData = store[index])) {
+          return;
+        }
+
+        callbacks.splice(index, 1);
+        store.splice(index, 1);
+
+        if (method) {
+          method.call(node, event, storeData.handler, capture);
+        } else {
           node.removeEventListener(event, storeData.handler, capture);
         }
       },
       removeEventAll: function(node, event, params) {
         var capture = params.capture,
-          namespace = (params.namespace || '') + '';
+          namespace = (params.namespace || '') + '',
+          method = params.method;
+
+        if (namespace === events.NAMESPACE_NATIVE && !method) {
+          method = natives.removeEventListener;
+        }
 
         var remove = function(capture) {
           var callbacks,
@@ -104,7 +130,11 @@
           });
 
           store.forEach(function(storeData, i) {
-            node.removeEventListener(event, storeData.handler, capture);
+            if (method) {
+              method.call(node, event, storeData.handler, capture);
+            } else {
+              node.removeEventListener(event, storeData.handler, capture);
+            }
           });
 
           store.splice(0, store.length);
@@ -120,16 +150,31 @@
       },
       dispatchEvent: function(node, event, params) {
         var defaultAction = params.defaultAction,
+          after = params.after,
+          before = params.before,
           inter = window[params.type || 'CustomEvent'];
 
         event = new inter(event, params.options);
-        
-        if (node.dispatchEvent(event) && typeof defaultAction === 'function') {
-          defaultAction.call(this);
+
+        if (typeof before === 'function') {
+          before(event);
         }
+
+        var result = node.dispatchEvent(event);
+
+        if (typeof after === 'function') {
+          after(event, result);
+        }
+        
+        if (result && typeof defaultAction === 'function') {
+          defaultAction.call(this, event);
+        }
+
+        return result;
       },
       cleanEvents: function(node, namespace) {
-        if (!namespace || namespace === events.NAMESPACE_INTERNAL) return;
+        if (!namespace || namespace === events.NAMESPACE_INTERNAL ||
+          namespace === events.NAMESPACE_NATIVE) return;
 
         var clean = function(namespace) {
           if (!namespace) return;
@@ -146,15 +191,128 @@
         clean(store[namespace]);
         delete store[namespace];
       },
-      NAMESPACE_INTERNAL: 'internal'
+      shadowEventAddition: function(event, fn) {
+        var resultSynced;
+
+        events.syncEvent(event, function(synced) {
+          resultSynced = synced;
+
+          return {
+            addEventListener: function(type, callback, capture) {
+              events.addEvent(this, type, {
+                handler: function(e) {
+                  fn.call(this, e);
+                  callback.call(this, e);
+                },
+                callback: callback,
+                capture: capture,
+                method: synced.addEventListener
+              });
+            },
+            removeEventListener: function(type, callback, capture) {
+              events.removeEvent(this, type, {
+                callback: callback,
+                capture: capture,
+                method: synced.removeEventListener
+              });
+            }
+          };
+        });
+      },
+      syncEvent: function(event, handle) {
+        var lastSynced = hasOwn.call(events.synced, event) ?
+          events.synced[event] : natives;
+
+        var newSynced = handle(lastSynced);
+
+        if (!newSynced.addEventListener) {
+          newSynced.addEventListener = lastSynced.addEventListener;
+        }
+
+        if (!newSynced.removeEventListener) {
+          newSynced.removeEventListener = lastSynced.removeEventListener;
+        }
+
+        events.synced[event] = newSynced;
+      },
+      handleOnce: function(obj, key, fn) {
+        var cached = Sync.cache(obj, HANDLE_ONCE_STORE_KEY),
+          listeners = cached[key] | 0;
+
+        // console.log('handleOnceCache:', listeners);
+
+        if (!listeners) {
+          fn.call(obj);
+        }
+
+        cached[key] = ++listeners;
+      },
+      handleIfLast: function(obj, key, fn) {
+        var cached = Sync.cache(obj, HANDLE_ONCE_STORE_KEY),
+          listeners = cached[key] | 0;
+
+        if (listeners) {
+          cached[key] = --listeners;
+
+          if (!listeners) {
+            fn.call(obj);
+          }
+        }
+      },
+      shadowEventProp: function(e, key, val) {
+        try {
+          e[key] = val;
+        } catch (err) {};
+        
+        if (e[key] !== val) {
+          // try to change property if configurable
+          // in Chrome should change getter instead of value
+          try {
+            Object.defineProperty(e, key, {
+              get: function() {
+                return val;
+              }
+            });
+          } catch (err) {
+            var protoEvent = e;
+
+            e = Object.create(e/*, {
+              [key]: {
+                value: val
+              }
+            }*/);
+
+            Object.defineProperty(e, key, {
+              value: val
+            });
+
+            [
+              'preventDefault',
+              'stopPropagation',
+              'stopImmediatePropagation'
+            ].forEach(function(key) {
+              e[key] = function() {
+                protoEvent[key]()
+              };
+            });
+          }
+        }
+
+        return e;
+      },
+      NAMESPACE_INTERNAL: 'internal',
+      NAMESPACE_NATIVE: 'native'
     },
     natives = events.natives,
     commonDOMET = !hasOwn.call(HTMLDivElement.prototype, 'addEventListener'),
     ETOwnBuggy = false,
-    ETList = ['EventTarget', 'Node', 'Element', 'HTMLElement'];
+    ETList = ['EventTarget', 'Node', 'Element', 'HTMLElement'],
+    hasTouch = 'ontouchstart' in document;
  
   var EVENTS_CALLBACKS_INDEX = 'events_callbacks_index',
-    EVENTS_HANDLERS_STORE = 'events_handlers_store';
+    EVENTS_HANDLERS_STORE = 'events_handlers_store',
+    EVENT_TARGET_COMPUTED_STYLE = 'event_computed_style',
+    HANDLE_ONCE_STORE_KEY = 'handle_once_store';
 
   var getCache = function(params) {
     var data = Sync.cache(params.node, params.key),
@@ -291,6 +449,8 @@
     }
   }());
 
+
+  // fix disabled elements
   (function() {
     var disabled = (function() {
       var button = document.createElement('button'),
@@ -431,7 +591,8 @@
     //   <button disabled></button>
     // </fieldset>
   }());
-
+  
+  // fix stopImmediatePropagation
   if (window.Event &&
     !('stopImmediatePropagation' in Event.prototype)) (function() {
     var stopDesc = Object.getOwnPropertyDescriptor(Event.prototype, 'stopPropagation');
@@ -597,6 +758,62 @@
     }
   });
 
+  (function() {
+    var _mouseClick = new MouseEvent('click');
+
+    if ([
+      MouseEvent.prototype,
+      _mouseClick
+    ].every(function(target) {
+      if (!('layerX' in target)) return true;
+    })) {
+      ['X', 'Y'].forEach(function(axis) {
+        define(MouseEvent.prototype, 'layer' + axis, {
+          get: function() {
+            var computed = Sync.cache(this);
+
+            computed = computed[EVENT_TARGET_COMPUTED_STYLE] ||
+              (computed[EVENT_TARGET_COMPUTED_STYLE] =
+                window.getComputedStyle(this.target));
+
+            if (computed.position === 'static') {
+              return this['offset' + axis] +
+                this.target['offset' + (axis === 'X' ? 'Left' : 'Top')];
+            } else {
+              return this['offset' + axis];
+            }
+          }
+        });
+      });
+    }
+
+    if ([
+      MouseEvent.prototype,
+      _mouseClick
+    ].every(function(target) {
+      if (!('offsetX' in target)) return true;
+    })) {
+      ['X', 'Y'].forEach(function(axis) {
+        define(MouseEvent.prototype, 'offset' + axis, {
+          get: function() {
+            var computed = Sync.cache(this);
+
+            computed = computed[EVENT_TARGET_COMPUTED_STYLE] ||
+              (computed[EVENT_TARGET_COMPUTED_STYLE] =
+                window.getComputedStyle(this.target));
+
+            if (computed.position === 'static') {
+              return this['layer' + axis] -
+                this.target['offset' + (axis === 'X' ? 'Left' : 'Top')];
+            } else {
+              return this['layer' + axis];
+            }
+          }
+        });
+      });
+    }
+  }());
+
   [
     'addEventListener',
     'removeEventListener',
@@ -608,90 +825,146 @@
 
     natives[method] = native.desc.value;
 
-    setDOMET(method, function() {
+    setDOMET(method, function(arg1, arg2, arg3) {
       var hook,
-        type,
-        arg = arguments[0];
+        type;
 
-      if (typeof arg === 'object') {
-        type =  arg.type;
+      if (typeof arg1 === 'object') {
+        type =  arg1.type;
       } else {
-        type = arg;
+        type = arg1;
       }
 
       if (type && events.synced.hasOwnProperty(type) &&
           (hook = events.synced[type]) && (hook = hook[method])) {
         if (typeof hook === 'string') {
-          arguments[0] = hook;
+          arg1 = hook;
         } else {
-          return hook.apply(this, arguments);
+          return hook.call(this, arg1, arg2, arg3);
         }
       }
 
-      return natives[method].apply(this, arguments);
+      return natives[method].call(this, arg1, arg2, arg3);
     }, native.desc);
   });
 
-  if (!('onmouseenter' in document.createElement('div'))) {
+  // fix mouseenter/leave if they are not exist
+  // or shadow them on devices with touch because
+  // native enter/leave are broken in Chrome ...
+  // ... and we cannot detect that
+  bindEnterLeave: if (!('onmouseenter' in document.createElement('div')) || hasTouch) {
+    // break bindEnterLeave;
+
     Sync.each({
       mouseenter: 'mouseover',
       mouseleave: 'mouseout'
     }, function(event, hook) {
-      events.synced[hook] = {
-        addEventListener: function(hook, callback, capture) {
-          events.addEvent(this, event, {
-            handler: function(e) {
-              var target = this,
-                relatedTarget = e.relatedTarget;
+      var hookKey = 'hook_' + event + '_' + hook,
+        originalEventKeyHook = 'hook_' + event,
+        originalHookKeyHook = 'hook_' + hook,
+        eventSynched,
+        hookEvents = {
+          add: function(event) {
+            events.handleOnce(document, hookKey, function() {
+              // console.log('handleOnce', hookKey, document);
 
-              if (!relatedTarget || (target !== relatedTarget &&
-                   !target.contains(relatedTarget))) {
-                events.dispatchEvent(target, hook, {
-                  type: 'MouseEvent',
-                  options: Sync.extend({}, e, {
-                    bubbles: false,
-                    cancelable: false
-                  })
-                });
-              }
-            },
-            callback: callback,
-            capture: capture
-          });
+              events.addEvent(document, event, {
+                handler: function(e) {
+                  var target = e.target,
+                    relatedTarget = e.relatedTarget;
 
-          events.natives.addEventListener.call(this, hook, callback, capture);
-        },
-        removeEventListener: function(hook, callback, capture) {
-          events.removeEvent(this, event, {
-            callback: callback,
-            capture: capture
-          });
+                  events.dispatchEvent(target, originalEventKeyHook, {
+                    type: 'MouseEvent',
+                    options: e
+                  });
 
-          events.natives.removeEventListener.call(this, hook, callback, capture);
+                  if (!relatedTarget || (target !== relatedTarget &&
+                       !target.contains(relatedTarget))) {
+                    events.dispatchEvent(target, originalHookKeyHook, {
+                      type: 'MouseEvent',
+                      options: Sync.extend({}, e, {
+                        bubbles: false,
+                        cancelable: false
+                      })
+                    });
+                  }
+                },
+                // index
+                callback: hookEvents,
+                capture: true,
+                method: eventSynched.addEventListener
+              });
+            });
+          },
+          remove: function(event) {
+            events.handleIfLast(document, hookKey, function() {
+              events.removeEvent(document, event, {
+                // index
+                callback: hookEvents,
+                capture: true,
+                method: eventSynched.removeEventListener
+              });
+            });
+          }
+        };
+
+      // mouseover / mouseout
+      events.syncEvent(event, function(synced) {
+        eventSynched = synced;
+
+        return {
+          addEventListener: function(event, callback, capture) {
+            events.addEvent(this, originalEventKeyHook, {
+              handler: function(e) {
+                e = events.shadowEventProp(e, 'type', event);
+                callback.call(this, e);
+              },
+              callback: callback,
+              capture: capture
+            });
+
+            hookEvents.add(event);
+          },
+          removeEventListener: function(event, callback, capture) {
+            events.removeEvent(this, originalEventKeyHook, {
+              callback: callback,
+              capture: capture
+            });
+
+            hookEvents.remove(event);
+          }
+        };
+      });
+
+      // mouseenter / mouseleave
+      events.syncEvent(hook, function(synced) {
+        return {
+          addEventListener: function(hook, callback, capture) {
+            events.addEvent(this, originalHookKeyHook, {
+              handler: function(e) {
+                e = events.shadowEventProp(e, 'type', event);
+                callback.call(this, e);
+              },
+              callback: callback,
+              capture: capture
+            });
+
+            hookEvents.add(event);
+          },
+          removeEventListener: function(hook, callback, capture) {
+            events.removeEvent(this, originalHookKeyHook, {
+              callback: callback,
+              capture: capture
+            });
+
+            hookEvents.remove(event);
+          }
         }
-      };
+      });
     });
   }
 
-  if (!'oninput' in document.createElement('input')) {
-    events.synced.input = {
-      addEventListener: function(type, callback, capture) {
-        var self = this;
-
-        if (window.TextEvent && ((this.attachEvent && this.addEventListener) ||
-            (this.nodeName.toLowerCase() === 'textarea' && !('oninput' in this))) ||
-            (!'oninput' in this || !this.addEventListener)) {
-          bindKeyPress.call(this, type, callback, capture);
-        }
-
-        natives.addEventListener.call(this, type, callback, capture);
-      },
-      removeEventListener: function(type, callback, capture) {
-        unbindKeyPress.call(this, type, callback, capture);
-        natives.removeEventListener.call(this, type, callback, capture);
-      }
-    };
-
+  events.syncEvent('input', function(synced) {
     var bindKeyPress = function(hook, callback, capture) {
       var self = this,
         handler = function(e) {
@@ -704,6 +977,22 @@
           });
         };
 
+      events.addEvent(self, 'contextmenu', {
+        handler: function() {
+          var handleMove = function() {
+            self.removeEventListener('mousemove', handleMove, true);
+            document.removeEventListener('mousemove', handleMove, true);
+
+            handler();
+          };
+
+          self.addEventListener('mousemove', handleMove, true);
+          document.addEventListener('mousemove', handleMove, true);
+        },
+        callback: callback,
+        capture: true
+      });
+
       keypressBindings.forEach(function(event) {
         events.addEvent(self, event, {
           handler: handler,
@@ -714,6 +1003,11 @@
     },
     unbindKeyPress = function(hook, callback, capture){
       var self = this;
+
+      events.removeEvent(self, 'contextmenu', {
+        callback: callback,
+        capture: true
+      });
 
       keypressBindings.forEach(function(event) {
         events.removeEvent(self, event, {
@@ -727,8 +1021,33 @@
       'cut',
       'paste',
       'copy'
-    ];
-  };
+    ],
+    bindKey = 'hook_oninput',
+    bindIndex = function() {};
+
+    return {
+      addEventListener: function(type, callback, capture) {
+        var self = this;
+
+        if (window.TextEvent && ((this.attachEvent && this.addEventListener) ||
+            (this.nodeName.toLowerCase() === 'textarea' && !('oninput' in this))) ||
+            (!'oninput' in this || !this.addEventListener)) {
+          events.handleOnce(this, bindKey, function() {
+            bindKeyPress.call(this, type, bindIndex, capture);
+          });
+        }
+
+        synced.addEventListener.call(this, type, callback, capture);
+      },
+      removeEventListener: function(type, callback, capture) {
+        events.handleIfLast(this, bindKey, function() {
+          unbindKeyPress.call(this, type, bindIndex, capture);
+        });
+
+        synced.removeEventListener.call(this, type, callback, capture);
+      }
+    }
+  });
 
   Sync.events = events;
 }(this, this.document, Sync));

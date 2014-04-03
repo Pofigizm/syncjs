@@ -15,6 +15,10 @@
     transitionProperty = 'Transition',
     transitionVendor = '',
     transformProperty = 'Transform',
+    perspectiveProperty = 'Perspective',
+    backfaceProperty = 'BackfaceVisibility',
+    backfaceKey = 'backfaceVisibility',
+    perspectiveOrigin,
     transformOrigin,
     transformStyle,
     style = document.createElement('div').style;
@@ -27,19 +31,17 @@
   hasOwn = Object.prototype.hasOwnProperty,
   isArray = Array.isArray,
   slice = Array.prototype.slice,
-  getTime = window.performance && (function() {
-    if (!performance.now) {
-      performance.now = performance.webkitNow || performance.msNow;
-    }
+  getTime = window.performance ? (function() {
+    var now = performance.now || performance.webkitNow || performance.msNow;
 
-    if (!performance.now) {
+    if (!now) {
       return Date.now;
     }
 
     return function() {
-      return performance.now();
+      return now.call(performance);
     };
-  }()) || Date.now;
+  }()) : Date.now;
 
   // match vendor section
   {
@@ -65,6 +67,8 @@
 
     if (transformProperty.toLowerCase() in style) {
       transformProperty = transformProperty.toLowerCase();
+      transformOrigin = transformProperty + 'Origin';
+      transformStyle = transformProperty + 'Style';
     } else if (!vendors.some(function(vendor) {
       if (vendor + transformProperty in style) {
         transformProperty = vendor + transformProperty;
@@ -77,9 +81,37 @@
     })) {
       transformProperty = null;
     }
+
+    if (perspectiveProperty.toLowerCase() in style) {
+      perspectiveProperty = perspectiveProperty.toLowerCase();
+      perspectiveOrigin = perspectiveProperty + 'Origin';
+    } else if (!vendors.some(function(vendor) {
+      if (vendor + perspectiveProperty in style) {
+        perspectiveProperty = vendor + perspectiveProperty;
+        perspectiveOrigin = perspectiveProperty + 'Origin';
+        return true;
+      }
+
+      return false;
+    })) {
+      perspectiveProperty = null;
+    }
+
+    if (backfaceKey in style) {
+      backfaceProperty = backfaceKey;
+    } else if (!vendors.some(function(vendor) {
+      if (vendor + backfaceProperty in style) {
+        backfaceProperty = vendor + backfaceProperty;
+        return true;
+      }
+
+      return false;
+    })) {
+      backfaceProperty = null;
+    }
   }
 
-  var TRANSFORM_2D_MAP = {
+  var TRANSFORM_MAP = {
       translate: 'px',
       translatex: 'px',
       translatey: 'px',
@@ -92,12 +124,20 @@
       skewy: 'deg',
       matrix: ''
     },
+    TRANSFORM_3D_MAP = {
+      translatez: 'px',
+      rotatex: 'deg',
+      rotatey: 'deg',
+      rotatez: 'deg',
+      scalez: ''
+    },
     R_CAMEL_TO_CSS = /([A-Z])(?=[a-z])/g,
     DEFAULT_TRANSITION_DURATION = 300,
     DEFAULT_TRANSITION_FUNCTION = 'ease',
     DEFAULT_TRANSITION_DELAY = 0,
     STYLE_MAP = {
       transition: transitionProperty,
+      transitionTimingFunction: transitionProperty + 'TimingFunction',
       transform: transformProperty,
       transformOrigin: transformOrigin,
       transformOriginX: transformOrigin + 'X',
@@ -118,7 +158,7 @@
       })[0] || function(fn, element) {
         return setTimeout(function() {
           fn.call(element, getTime());
-        }, 17);
+        }, 15);
       };
 
     window[CANCEL_REQUEST_ANIMATION_FRAME] = ['webkit', 'moz', 'o']
@@ -247,109 +287,109 @@
   };
 
   // Transitions section
-  if (transitionProperty) {
-    var Transition = function(params) {
-      if (params) {
-        this.params = params;
+  var Transition = function(params) {
+    if (params) {
+      this.params = params;
 
-        Sync.each(params, function(val, key) {
-          if (typeof val === 'number') {
-            params[key] = [val];
-          }
-
-          if (!isArray(val)) {
-            params[key] = [];
-          }
-        });
-      } else {
-        this.params = params = {};
-      }
-
-      /*this.stack = params.map(function(param) {
-        if (typeof param === 'string') {
-          param = [param];
-        }
-
-        if (!Array.isArray(param)) return '';
-
-        var key = param[0];
-
-        if (STYLE_MAP.hasOwnProperty(key)) {
-          key = STYLE_MAP[key];
-        }
-
-        key = key.replace(R_CAMEL_TO_CSS, camelToCss);
-
-        if (!key.search(R_VENDORS)) {
-          key = '-' + key;
-        }
-
-        param[0] = key;
-
-        return param.join(' ');
-      });*/
-    };
-
-    Transition.stop = function(element) {
-      Transition.clean(element);
-      element.style[transitionProperty] = 'null';
-    };
-
-    Transition.clean = function(element, listeners) {
-      if (!listeners) {
-        listeners = Sync.cache(element, TRANSITION_DATA_KEY).listeners || [];
-      }
-
-      eventName.forEach(function(event) {
-        listeners.forEach(function(listener) {
-          element.removeEventListener(event, listener, true);
-        })
-      });
-    };
-
-    Transition.run = function(elem, props, globalCallback) {
-      var style = elem.style,
-        keys = Object.keys(props),
-        count = keys.length,
-        cssProps = {},
-        data = Sync.cache(elem, TRANSITION_DATA_KEY),
-        listeners = data.listeners || (data.listeners = []),
-        transition = new Transition(),
-        params = transition.params;
-
-      Sync.each(props, function(val, key) {
+      Sync.each(params, function(val, key) {
         if (typeof val === 'number') {
-          val = [val];
+          params[key] = [val];
         }
 
-        if (!isArray(val) || !val.length) return;
+        if (!isArray(val)) {
+          params[key] = [];
+        }
+      });
+    } else {
+      this.params = params = {};
+    }
 
-        var len = val.length,
-          domKey = key,
-          cssKey,
-          callback = typeof (len > 1 && val[len - 1]) === 'function',
-          handle = function(trans, next, index) {
-            var value = trans.shift(),
-              transLength = trans.length,
-              transCallback = typeof trans[transLength - 1] === 'function';
+    /*this.stack = params.map(function(param) {
+      if (typeof param === 'string') {
+        param = [param];
+      }
 
-            if (transCallback) {
-              transCallback = trans.pop();
-            }
+      if (!Array.isArray(param)) return '';
 
-            params[domKey] = trans;
+      var key = param[0];
 
-            if (index) {
-              style.transition = transition;
-            }
+      if (STYLE_MAP.hasOwnProperty(key)) {
+        key = STYLE_MAP[key];
+      }
 
-            style[domKey] = value;
+      key = key.replace(R_CAMEL_TO_CSS, camelToCss);
 
-            // key
-            // trans [value, duration, timing-function, delay, callback];
+      if (!key.search(R_VENDORS)) {
+        key = '-' + key;
+      }
 
-            // style[domKey] = props[key];
+      param[0] = key;
 
+      return param.join(' ');
+    });*/
+  };
+
+  Transition.stop = function(element) {
+    Transition.clean(element);
+    element.style[transitionProperty] = 'null';
+  };
+
+  Transition.clean = function(element, listeners) {
+    if (!listeners) {
+      listeners = Sync.cache(element, TRANSITION_DATA_KEY).listeners || [];
+    }
+
+    eventName.forEach(function(event) {
+      listeners.forEach(function(listener) {
+        element.removeEventListener(event, listener, true);
+      })
+    });
+  };
+
+  Transition.run = function(elem, props, globalCallback) {
+    var style = elem.style,
+      keys = Object.keys(props),
+      count = keys.length,
+      cssProps = {},
+      data = Sync.cache(elem, TRANSITION_DATA_KEY),
+      listeners = data.listeners || (data.listeners = []),
+      transition = new Transition(),
+      params = transition.params;
+
+    Sync.each(props, function(val, key) {
+      if (typeof val === 'number') {
+        val = [val];
+      }
+
+      if (!isArray(val) || !val.length) return;
+
+      var len = val.length,
+        domKey = key,
+        cssKey,
+        callback = typeof (len > 1 && val[len - 1]) === 'function',
+        handle = function(trans, next, index) {
+          var value = trans.shift(),
+            transLength = trans.length,
+            transCallback = typeof trans[transLength - 1] === 'function';
+
+          if (transCallback) {
+            transCallback = trans.pop();
+          }
+
+          params[domKey] = trans;
+
+          if (index) {
+            style.transition = transition;
+          }
+
+          style[domKey] = value;
+
+          // key
+          // trans [value, duration, timing-function, delay, callback];
+
+          // style[domKey] = props[key];
+
+          if (transitionProperty) {
             var transitionListener = function(e) {
               if (e.eventPhase !== e.AT_TARGET) return;
 
@@ -380,87 +420,95 @@
             eventName.forEach(function(event) {
               elem.addEventListener(event, transitionListener, true);
             });
-          },
-          end = function() {
-
-            if (callback) {
-              callback();
+          } else {
+            if (transCallback) {
+              transCallback();
             }
 
-            delete cssProps[cssKey];
-
-            if (!--count) {
-              Transition.clean(elem, listeners);
-              globalCallback && globalCallback();
-              style[transitionProperty] = '';
+            if (next) {
+              next();
             }
-          };
+          }
+        },
+        end = function() {
 
-        {
-          if (STYLE_MAP.hasOwnProperty(key)) {
-            domKey = STYLE_MAP[key];
+          if (callback) {
+            callback();
           }
 
-          cssKey = domKey.replace(R_CAMEL_TO_CSS, camelToCss);
+          delete cssProps[cssKey];
 
-          if (!cssKey.search(R_VENDORS)) {
-            cssKey = '-' + cssKey;
+          if (!--count) {
+            Transition.clean(elem, listeners);
+            globalCallback && globalCallback();
+            style[transitionProperty] = '';
           }
+        };
 
-          cssProps[cssKey] = 1;
+      {
+        if (STYLE_MAP.hasOwnProperty(key)) {
+          domKey = STYLE_MAP[key];
         }
 
-        if (callback) {
-          callback = val.pop();
+        cssKey = domKey.replace(R_CAMEL_TO_CSS, camelToCss);
+
+        if (!cssKey.search(R_VENDORS)) {
+          cssKey = '-' + cssKey;
         }
 
-        if (!isArray(val[0])) {
-          handle(val, end, 0);
-          return;
-        }
-
-        val.reduceRight(function(next, trans, index) {
-          return function() {
-            handle(trans, next, index);
-          };
-        }, end)();
-      });
-
-      console.log(transition + '');
-
-      style.transition = transition;
-    };
-
-    Transition.prototype = {
-      toString: function() {
-        var params = this.params;
-
-        return Object.keys(params).map(function(key) {
-          var param = params[key],
-            duration = param[0],
-            fn = param[1],
-            delay = param[2];
-
-          if (STYLE_MAP.hasOwnProperty(key)) {
-            key = STYLE_MAP[key];
-          }
-
-          key = key.replace(R_CAMEL_TO_CSS, camelToCss);
-
-          if (!key.search(R_VENDORS)) {
-            key = '-' + key;
-          }
-
-          return [
-            key,
-            duration ? duration + 'ms' : '',
-            fn || '',
-            delay ? delay + 'ms' : ''
-          ].join(' ');
-        }).join(', ');
+        cssProps[cssKey] = 1;
       }
-    };
-  }
+
+      if (callback) {
+        callback = val.pop();
+      }
+
+      if (!isArray(val[0])) {
+        handle(val, end, 0);
+        return;
+      }
+
+      val.reduceRight(function(next, trans, index) {
+        return function() {
+          handle(trans, next, index);
+        };
+      }, end)();
+    });
+
+    // console.log(transition + '');
+
+    style.transition = transition;
+  };
+
+  Transition.prototype = {
+    toString: function() {
+      var params = this.params;
+
+      return Object.keys(params).map(function(key) {
+        var param = params[key],
+          duration = param[0],
+          fn = param[1],
+          delay = param[2];
+
+        if (STYLE_MAP.hasOwnProperty(key)) {
+          key = STYLE_MAP[key];
+        }
+
+        key = key.replace(R_CAMEL_TO_CSS, camelToCss);
+
+        if (!key.search(R_VENDORS)) {
+          key = '-' + key;
+        }
+
+        return [
+          key,
+          duration ? duration + 'ms' : '',
+          fn || '',
+          delay ? delay + 'ms' : ''
+        ].join(' ');
+      }).join(', ');
+    }
+  };
 
   // Transform section
   if (transformProperty) {
@@ -486,13 +534,11 @@
       // Object.keys(map).forEach(function(name) {
       //   stack
       //     .push(name + '(' + (map[name] + '')
-      //     .replace(/\s*(,)|$\s*/g, TRANSFORM_2D_MAP[name.toLowerCase()] + '$1') + ')');
+      //     .replace(/\s*(,)|$\s*/g, TRANSFORM_MAP[name.toLowerCase()] + '$1') + ')');
       // });
     };
 
-    // 2d transforms
-
-    [{
+    var transforms2d = [{
       key: 'translate',
       len: 2
     }, {
@@ -524,15 +570,40 @@
       len: 1
     }, {
       key: 'matrix',
-      len: 6
-    }].forEach(function(prop) {
+      len: perspectiveProperty ? 9 : 6
+    }];
+
+    if (perspectiveProperty) {
+      Sync.extend(TRANSFORM_MAP, TRANSFORM_3D_MAP);
+
+      transforms2d.push({
+        key: 'translateZ',
+        len: 1
+      }, {
+        key: 'scaleZ',
+        len: 1
+      }, {
+        key: 'rotateX',
+        len: 1
+      }, {
+        key: 'rotateY',
+        len: 1
+      }, {
+        key: 'rotateZ',
+        len: 1
+      });
+    }
+
+    // 2d transforms
+
+    transforms2d.forEach(function(prop) {
       var key = prop.key,
         len = prop.len;
 
       var transform = Transform[key] = function() {
         var args = slice.call(arguments, 0, len).map(function(arg) {
           return arg !== void 0 ?
-            parseFloat(arg) + TRANSFORM_2D_MAP[key.toLowerCase()] : 0;
+            parseFloat(arg) + TRANSFORM_MAP[key.toLowerCase()] : 0;
         });
 
         return key + '(' + args.join(',') + ')';
@@ -557,6 +628,10 @@
     Transform: Transform,
     Transition: Transition,
     Animation: Animation,
+    transformProperty: transformProperty,
+    transitionProperty: transitionProperty,
+    perspectiveProperty: perspectiveProperty,
+    backfaceProperty: backfaceProperty,
     translate: Transform ? function(element, x, y) {
       element.style.transform = Transform.translate(x, y);
     } : function(element, x, y) {
@@ -586,106 +661,4 @@
   });
 
   style = null;
-
-  // timeline
-  (function() {
-
-
-    window.Timeline = function() {};
-
-    Timeline.prototype = {
-      get currentTime() {
-
-      },
-      play: function() {},
-      getCurrentPlayers: function() {},
-      toTimelineTime: function() {}
-    };
-
-    window.Player = function() {};
-
-    Player.prototype = {
-      source: null,
-      get timeline() {},
-      startTime: null,
-      currentTime: null,
-      playbackRate: 1,
-      paused: false
-    };
-
-    window.TimedItem = function() {};
-
-    TimedItem.prototype = {
-      get localTime() {},
-      get currentIteration() {},
-      get specified() {},
-      get startTime() {},
-      get iterationDuration() {},
-      get activeDuration() {},
-      get endTime() {},
-      get parent() {},
-      get previousSibling() {},
-      get nextSibling() {},
-      before: function() {},
-      after: function() {},
-      replace: function() {},
-      remove: function() {},
-      get player() {},
-      onstart: null,
-      oniteration: null,
-      onend: null,
-      oncancel: null
-    };
-
-    window.Timing = function() {};
-
-
-    Timing.prototype = {
-      startDelay: 0,
-      fillMode: null,
-      iterationStart: null,
-      iterationCount: null,
-      iterationDuration: null,
-      activeDuration: null,
-      playbackRate: null,
-      direction: null,
-      timingFunction: null
-    };
-
-    window.TimingInput = function() {};
-
-    TimingInput.prototype = {
-      startDelay: 0,
-      fillMode: 'forwards',
-      iterationStart: 0,
-      iterationCount: 1,
-      iterationDuration: 'auto',
-      activeDuration: 'auto',
-      playbackRate: 1,
-      direction: 'normal',
-      timingFunction: 'linear'
-    };
-
-    window.TimingGroup = function() {};
-    TimingGroup.prototype = Sync.extend(Object.create(TimedItem.prototype), {
-      get duration() {},
-      get firstChild() {},
-      get lastChild() {},
-      prepend: function() {},
-      append: function() {}
-    });
-
-    window.TimedItemList = function() {};
-    TimedItemList.prototype = {
-      get length() {},
-      get item() {}
-    };
-
-    window.Animation = function(element, effect, timing) {
-      this.target = element;
-      this.effect = effect;
-    };
-
-
-  }());
 }(this));

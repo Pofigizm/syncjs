@@ -12,7 +12,12 @@
     hasLoadEnd,
     hasLoadStart,
     hasWraps,
-    getDesc = Object.getOwnPropertyDescriptor,
+    getDescNude = Object.getOwnPropertyDescriptor,
+    getDesc = function(object, key) {
+      try {
+        return getDescNude(object, key);
+      } catch (e) {};
+    },
     define = Object.defineProperty,
     originalDesc = getDesc(window, 'XMLHttpRequest'),
     OriginalXHR = originalDesc.value,
@@ -183,16 +188,24 @@
       };
     });
   } else {
-    var unsupportResponseType;
+    var unsupportResponseType,
+      opened = false;
 
     try {
       xhr.responseType = 'text';
     } catch (e) {
       xhr.open('GET', '/', true);
+      opened = true;
     }
 
     ['json', 'document', 'arraybuffer', 'blob'].some(function(type) {
-      xhr.responseType = type;
+      try {
+        xhr.responseType = type;
+      } catch (e) {
+        unsupportResponseType = true;
+        // needGlobalWrap = true;
+        return true;
+      }
 
       if (xhr.responseType !== type) {
         unsupportResponseType = true;
@@ -206,6 +219,8 @@
       if (!resTypeDesc) {
         needGlobalWrap = true;
       }
+
+      console.log('ggggg');
 
       makeWrap('responseType', function(_super) {
         var value = _super.get();
@@ -260,6 +275,13 @@
   hasLoadStart = 'onloadstart' in xhr;
 
   var needStatusWrap;
+
+  // firefox before 16 fix
+  try {
+    getDescNude(OriginalXHR.prototype, 'status');
+  } catch (e) {
+    needGlobalWrap = true;
+  }
 
   try {
     xhr.status;
@@ -445,7 +467,6 @@
         console.log('readyState: ', xhr.readyState);
 
         var status = xhr.status;
-
 
         if (xhr.getAllResponseHeaders() && status &&
           !isNaN(status) && xhr.statusText && xhr.statusText !== 'Unknown') {
@@ -752,7 +773,8 @@
       ["statusText", "status", "response", "responseType",
        "responseXML", "responseText", "upload", "withCredentials",
        "readyState", "onreadystatechange", "onprogress", "onloadstart",
-       "onloadend", "onload", "onerror", "onabort"].forEach(handler, xhr);
+       "onloadend", "onload", "onerror", "onabort",
+       "addEventListener", "removeEventListener", "dispatchEvent"].forEach(handler, xhr);
     }());
   } else if (fixes.length || hasWraps) {
     var XHRWrap = function() {

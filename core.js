@@ -200,4 +200,35 @@
       }
     }
   };
+
+  // need logger api
+  // var logger = new Sync.Logger('loggerName');
+  // logger.log('my log..') ->
+  //   [loggerName]: my log..
+
+  var logging = [];
+
+  Sync.Logger = function(name) {
+    this.name = name;
+  };
+
+  Sync.Logger.prototype = {
+    log: function() {
+      var args = slice.call(arguments);
+      args.unshift('[' + this.name + ']');
+      Sync.log.apply(null, args);
+    }
+  };
+
+  Sync.log = function syncLog() {
+    var log = slice.call(arguments);
+
+    if (Sync.debug) {
+      window.console.log.apply(window.console, log);
+    }
+
+    logging.push(log.join(' '));
+  };
+
+  Sync.logging = logging;
 }(this));

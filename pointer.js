@@ -1,6 +1,19 @@
 ;(function(Sync) {
   var navigator = window.navigator,
-    pointers = {};
+    pointers = {
+      flags: {
+        IMMEDIATE_POINTER_LEAVE: true,
+        DETECT_CHROME_VERSION: true,
+        DETECT_CHROME_BEHAVIOR: true,
+        MOUSE_EVENTS: true,
+        TOUCH_EVENTS: true,
+        FIX_FLING_STOP: true,
+        TOUCHMOVE_SLOP_SIZE: 10,
+        // one of: auto, pointers-first, touch-first
+        TOUCH_COMPATIBILITY_MODE: 'touch-first'
+      },
+      devices: {}
+    };
   
   Sync.pointers = pointers;
 
@@ -11,27 +24,83 @@
     hasOwn = Object.prototype.hasOwnProperty,
     slice = Array.prototype.slice,
     pow = Math.pow,
-    activePointers = {},
+    abs = Math.abs,
     uidInc = 0,
     hasTouch = 'ontouchstart' in document,
-    ua = navigator.userAgent.toLowerCase(),
-    isV8 = !!(window.v8Intl || (window.Intl && Intl.v8BreakIterator)),
-    isChrome = !!window.chrome,
-    // need to check chrome not by UserAgent
-    // chrome for android has not plugins and extensions
-    // but on desktop plugins also might be disabled
-    // so we need to check by the ability to install extensions
-    isAndroid = ua.indexOf('android') !== -1 ||
-      // detect for v8 to determine that this is not a iOS 
-      isChrome && (!chrome.webstore/* || !chrome.app*/) && isV8,
-    isIOS = !isAndroid && /iP(ad|hone|od)/i.test(navigator.userAgent),
-    isIOSBadTarget = isIOS && (/OS ([6-9]|\d{2})_\d/).test(navigator.userAgent);
+    logger = new Sync.Logger('pointers');
 
-  /*console.log(JSON.stringify({
+  {
+    var ua = navigator.userAgent.toLowerCase(),
+      vendorStr = (navigator.vendor || '').toLowerCase(),
+      vendor = ['google', 'yandex', 'opera', 'mozilla', {
+        search: 'research in motion',
+        key: 'rim'
+      }].reduce(function(result, key) {
+        if (typeof key !== 'string') {
+          var found = vendorStr.indexOf(key.search) !== -1;
+          result[key.key] = found;
+        } else {
+          found = vendorStr.indexOf(key) !== -1;
+          result[key] = found;
+        }
+
+        return result;
+      }, {}),
+      isV8 = !!(window.v8Intl || (window.Intl && Intl.v8BreakIterator)),
+      isAndroidStockium = false,
+      isAndroidStock = 'isApplicationInstalled' in navigator ||
+        (isAndroidStockium = isV8 && !window.chrome && vendor.google),
+      isChrome = !!window.chrome && !isAndroidStock,
+      isFx = !!navigator.mozApps,
+      isAndroidFx = isFx && (navigator.appVersion || '')
+        .toLowerCase().indexOf('android') !== -1,
+      // need to check chrome not by UserAgent
+      // chrome for android has not plugins and extensions
+      // but on desktop plugins also might be disabled
+      // so we need to check by the ability to install extensions
+      isChromeAndroid = isChrome &&
+        ('startActivity' in navigator || !chrome.webstore),
+      isAndroid = isAndroidStock || isChromeAndroid || isAndroidFx ||
+        (!isAndroidStock && !isChromeAndroid && !isAndroidFx) && 
+          ua.indexOf('android') !== -1,
+      isIOS = !isAndroid &&
+        hasOwn.call(navigator, 'standalone') && 'ongesturestart' in window/* !!window.getSearchEngine*/ /*,
+      isBadTargetIOS = isIOS && /OS ([6-9]|\d{2})_\d/.test(navigator.userAgent)*/,
+
+      // chrome 32+
+      isChromeBelow31 = isChrome && 'vibrate' in navigator &&
+        'getContextAttributes' in document.createElement('canvas').getContext('2d'),
+      isBB10 = navigator.platform.toLowerCase() === 'blackberry' && vendor.rim;
+  }
+
+  console.log(JSON.stringify({
     isV8: isV8,
     isAndroid: isAndroid,
-    isChrome: isChrome
-  }));*/
+    isChrome: isChrome,
+    isChromeAndroid: isChromeAndroid,
+    isAndroidStock: isAndroidStock,
+    isFx: isFx,
+    isAndroidFx: isAndroidFx,
+    isIOS: isIOS
+  }));
+
+  // chrome 18 window.Intent
+  // chrome 18 navigator.startActivity
+  // chrome 18 chrome.appNotifications
+  // chrome 18 chrome.setSuggestResult
+  // chrome 18 chrome.searchBox
+  // chrome 18 chrome.webstore
+  // chrome 18 chrome.app
+
+  // android stock chrome.searchBox
+  // android stock navigator.isApplicationInstalled
+  // android stock navigator.connection
+
+  // chrome android latest inc isV8
+
+  // chrome desktop chrome.app
+  // chrome desktop chrome.webstore
+  // inc isV8
 
   var FAKE_PREFIX = 'fake_',
     MOUSE_PREFIX = 'mouse',
@@ -69,42 +138,6 @@
     },
     POINTER_FIELDS = Object.keys(POINTER_DEFAULTS);
 
-  [
-    'down',
-    'up',
-    'move',
-    'over',
-    'out',
-    'enter',
-    'leave',
-    'cancel'
-  ].forEach(function(event) {
-    var full = POINTER_PREFIX + event;
-
-    events.syncEvent(full, function(synced) {
-      return {
-        addEventListener: function(type, callback, capture) {
-          triggerDeviceListeners(this, event/*, capture*/);
-
-          events.addEvent(this, full, {
-            handler: callback,
-            callback: callback,
-            capture: capture,
-            method: synced.addEventListener
-          });
-        },
-        removeEventListener: function(type, callback, capture) {
-          muteDeviceListeners(this, event/*, capture*/);
-
-          events.addEvent(this, full, {
-            callback: callback,
-            capture: capture,
-            method: synced.removeEventListener
-          });
-        }
-      }
-    });
-  });
 
   // MSPointer type
 
@@ -165,7 +198,11 @@
     };
   }());
 
-  var devices = {};
+  var devices = pointers.devices,
+    flags = pointers.flags,
+    hasTouchListeners,
+    hasMouseListeners,
+    hasPointerListeners;
   
   var triggerDeviceListeners = function(node, event,/* capture,*/ deviceType) {
     // if (!devices.length) return;
@@ -256,6 +293,13 @@
 
     return e;
   },
+  extendDOMObject = function(dist, source) {
+    for (var key in source) {
+      dist[key] = source[key];
+    }
+
+    return dist;
+  },
   syncEvent = function(deviceNatives, full, event, device) {
     events.syncEvent(full, function(synced) {
       deviceNatives[full] = synced;
@@ -325,6 +369,44 @@
     };
   };
 
+  [
+    'down',
+    'up',
+    'move',
+    'over',
+    'out',
+    'enter',
+    'leave',
+    'cancel'
+  ].forEach(function(event) {
+    var full = POINTER_PREFIX + event;
+
+    events.syncEvent(full, function(synced) {
+      return {
+        addEventListener: function(type, callback, capture) {
+          triggerDeviceListeners(this, event);
+          !hasPointerListeners && (hasPointerListeners = true);
+
+          events.addEvent(this, full, {
+            handler: callback,
+            callback: callback,
+            capture: capture,
+            method: synced.addEventListener
+          });
+        },
+        removeEventListener: function(type, callback, capture) {
+          muteDeviceListeners(this, event);
+
+          events.addEvent(this, full, {
+            callback: callback,
+            capture: capture,
+            method: synced.removeEventListener
+          });
+        }
+      }
+    });
+  });
+
   window.PointerEvent = function(type, options) {
     var event = new window.MouseEvent(type, options);
 
@@ -353,8 +435,12 @@
     // so that is a device
     this.mouseEventsPrevented = false;
 
-    if (hasOwn.call(devices, type)) throw new Error();
+    if (hasOwn.call(devices, type)) {
+      logger.log('Duplicate of device:', type);
+      throw new Error();
+    }
 
+    logger.log('New device:', type);
     devices[type] = this;
   };
 
@@ -499,22 +585,39 @@
 
   // ###################
 
-  var needFastClick = (function() {
-    if (!isAndroid || !window.chrome) return true;
-
-    var metaViewport = document.querySelector('meta[name="viewport"]');
+  var mayNeedFastClick = (function() {
+    var metaViewport = document.querySelector('meta[name="viewport"]'),
+      hasNoScale = metaViewport &&
+        metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1;
 
     if (metaViewport) {
       // Chrome on Android with user-scalable="no" doesn't need FastClick (issue #89)
-      if (metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1) {
+      // https://github.com/ftlabs/fastclick/issues/89
+
+      // under question is false for Fx with his strange behavior when touch hold
+      // also trigger click (some thing about 600ms after touchstart)
+      if ((isChromeAndroid || isBB10 || isAndroidFx) && hasNoScale) {
         return false;
       }
+
       // Chrome 32 and above with width=device-width or less don't need FastClick
-      if (chromeVersion > 31 && window.innerWidth <= window.screen.width) {
+      if (flags.DETECT_CHROME_VERSION && isChromeAndroid && isChromeBelow31 &&
+          window.innerWidth <= window.screen.width) {
         return false;
       }
     }
+
+    /*if (noScale) {
+      console.log('no scale');
+      // do not want fast click at scaled pages
+      // mobile first apps need it
+      return false;
+    }*/
+
+    return true;
   }());
+
+  console.log('mayNeedFastClick:', mayNeedFastClick);
 
   // mouse type
 
@@ -524,6 +627,8 @@
       mouseNatives = {},
       mouseBindings = {
         down: function(e, type, event) {
+          if (e.isFastClick) return;
+
           var pointerFire = !mousePointer.buttons;
 
           if ('buttons' in e) {
@@ -559,6 +664,7 @@
           }
         },
         up: function(e, type, event) {
+          if (e.isFastClick) return;
           if (!mousePointer.buttons) return;
 
           if ('buttons' in e) {
@@ -592,6 +698,8 @@
           mouseDevice.mouseEventsPrevented = false;
         },
         cancel: function(e, type, event) {
+          if (e.isFastClick) return;
+
           var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
             type: 'MouseEvent',
             options: e
@@ -611,6 +719,8 @@
           mouseDevice.mouseEventsPrevented = false;
         },
         move: function(e, type, event) {
+          if (e.isFastClick) return;
+
           var canceled = !mousePointer
             .dispatchEvent(e.target, type, e, {
               bubbles: true,
@@ -632,6 +742,8 @@
 
     ['over', 'out', 'enter', 'leave'].forEach(function(type) {
       mouseBindings[type] = function(e, type, event) {
+        if (e.isFastClick) return;
+
         var option = type === 'over' || type === 'out';
 
         var canceled = !mousePointer.dispatchEvent(
@@ -665,8 +777,6 @@
         handler: function(e) {
           e.stopPropagation();
           e.stopImmediatePropagation();
-
-          // console.log(event, type);
 
           var isCompatibility = checkForCompatibility(this, e, event, type);
 
@@ -741,19 +851,18 @@
         return {
           addEventListener: function(type, callback, capture) {
             if (event) {
-              triggerDeviceListeners(this, event,/* capture,*/ 'mouse');
+              triggerDeviceListeners(this, event, 'mouse');
 
               if (hasTouch) {
-                triggerDeviceListeners(this, event,/* capture,*/ 'touch');
+                triggerDeviceListeners(this, event, 'touch');
               }
             }
 
+            !hasMouseListeners && (hasMouseListeners = true);
+
             events.addEvent(this, FAKE_PREFIX + full, {
               handler: function(e) {
-                // e = Sync.extend({}, e);
                 e = shadowEventType(e, type);
-
-                // console.log('type: ' + e.type);
                 callback.call(this, e);
               },
               callback: callback,
@@ -763,10 +872,10 @@
           },
           removeEventListener: function(type, callback, capture) {
             if (event) {
-              muteDeviceListeners(this, event,/* capture,*/ 'mouse');
+              muteDeviceListeners(this, event, 'mouse');
 
               if (hasTouch) {
-                muteDeviceListeners(this, event,/* capture,*/ 'touch');
+                muteDeviceListeners(this, event, 'touch');
               }
             }
 
@@ -795,32 +904,6 @@
       var full = MOUSE_PREFIX + event;
 
       syncMouseEvents(mouseNatives, full, event);
-
-      /*events.syncEvent(full, function(synced) {
-        mouseNatives[full] = synced;
-
-        return {
-          addEventListener: function(type, callback, capture) {
-            events.addEvent(this, FAKE_PREFIX + event, {
-              handler: function(e) {
-                e = Sync.extend({}, e);
-                e.type = type;
-                callback.call(this, e);
-              },
-              callback: callback,
-              capture: capture,
-              method: synced.addEventListener
-            });
-          },
-          removeEventListener: function(type, callback, capture) {
-            events.addEvent(this, FAKE_PREFIX + event, {
-              callback: callback,
-              capture: capture,
-              method: synced.removeEventListener
-            });
-          }
-        }
-      });*/
     });
   }());
 
@@ -831,7 +914,7 @@
         computed: computed,
         element: parent
       }],
-      needBreak;
+      isScrollable;
 
     while (parent && (parent = parent.parentElement)) {
       // if (parent === document.documentElement) break;
@@ -848,19 +931,16 @@
 
         (computed || (computed = getComputedStyle(parent))).position === 'fixed'
       ) {
-        needBreak = true;
+        isScrollable = true;
       }
 
       parents.push({
         element: parent,
-        computed: computed
+        computed: computed,
+        scrollable: isScrollable
       });
 
-      if (needBreak) {
-        break;
-      }
-
-      needBreak = false;
+      isScrollable = false;
     }
 
     return parents;
@@ -871,176 +951,10 @@
       touchNatives = {},
       touchesMap = {},
       touchBindings = {
-        start: function(e, type) {
-          var touches = e.changedTouches;
-
-          var handleTouch = function(touch) {
-            var pointer,
-              id = touch.identifier,
-              lastEnterTarget = touchDevice.lastEnterTarget;
-
-            if (touchesMap[id]) return;
-
-            var target = touch.target,
-              startTouch = {},
-              pointer = touchDevice.createPointer();
-
-            // firefox properties are from prototype
-            // and cannot be moved by Object.keys
-            for (var touchKey in touch) {
-              startTouch[touchKey] = touch[touchKey];
-            }
-
-            pointer.buttons = 1;
-
-            var overDict = getMouseDict(touch, {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                buttons: 0,
-                relatedTarget: null // prev target goes here
-              }),
-              downDict = getMouseDict(touch, {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                buttons: 1,
-                relatedTarget: null
-              }),
-              isPrimary = pointer.isPrimary,
-              needEnter = (!lastEnterTarget || !lastEnterTarget !== target),
-              computed = isPrimary && getComputedStyle(target),
-              parents;
-
-            var touchData = touchesMap[id] = {
-              pointer: pointer,
-              time: e.timeStamp,
-              // startTouch: Sync.extend({}, touch),
-              startTouch: startTouch,
-              startTarget: target,
-              prevTarget: target,
-              computed: isPrimary && needFastClick && computed
-            };
-
-            if (isPrimary) {
-              parents = findScrollParent(target, computed);
-
-              var touchAction = true;
-
-              parents.some(function(parent) {
-                var element = parent.element,
-                  computed = parent.computed || getComputedStyle(element),
-                  action = computed.touchAction ||
-                    computed.content.split(/\s*;\s*/).reduce(function(result, rule) {
-                      if (result) {
-                        return result;
-                      }
-
-                      rule = rule.split(/\s*:\s*/);
-
-                      if (rule[0] === 'touch-action') {
-                        return rule[1];
-                      }
-
-                      return result;
-                    }, '');
-
-                if (action === 'none') {
-                  touchAction = false;
-                  return true;
-                }
-              });
-  
-              // !touchAction === noScroll
-              touchData.touchAction = touchAction;
-              touchDevice.currentPrimaryTouch = touchData;
-            }
-
-            // this block should be uncommented if leave event should be fired
-            // not from pointerup/pointercancel event, but from pointerdown
-
-            /*if (isPrimary && lastEnterTarget &&
-                !lastEnterTarget.contains(target)) {
-              pointer.dispatchEvent(
-                lastEnterTarget,
-                // inherit from mouse dict
-                'leave', getMouseDict(touch, {
-                  bubbles: false,
-                  cancelable: false,
-                  button: 0,
-                  buttons: 0,
-                  relatedTarget: target
-                }));
-            }*/
-
-            isPrimary && dispatchMouseEvent(
-              'move',
-              target,
-              getMouseDict(touch, {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                buttons: 0,
-                relatedTarget: null
-              })
-            );
-
-            // pointerover
-            pointer.dispatchEvent(
-              target,
-              // inherit from mouse dict
-              'over', overDict/*, {
-                bubbles: true,
-                cancelable: true
-              }*/);
-
-            // compact mouseover
-            isPrimary && dispatchMouseEvent('over', target, overDict);
-
-            if (needEnter) {
-              // compact mouseenter
-              var enterDict = getMouseDict(touch, {
-                bubbles: false,
-                cancelable: false,
-                button: 0,
-                buttons: 0,
-                relatedTarget: lastEnterTarget
-              });
-
-              pointer.dispatchEvent(target, 'enter', enterDict);
-              isPrimary && dispatchMouseEvent('enter', target, enterDict);
-
-              touchDevice.lastEnterTarget = target;
-            }
-
-            // pointerdown
-            var canceled = !pointer.dispatchEvent(
-              target,
-              // inherit from mouse dict
-              'down', downDict/*, {
-                bubbles: true,
-                cancelable: true
-              }*/);
-
-            if (canceled) {
-              e.preventDefault();
-              touchDevice.mouseEventsPrevented = true;
-            }
-
-            // compact mousedown
-            if (isPrimary && /*!touchDevice.mouseEventsPrevented*/ canceled) {
-              dispatchMouseEvent('down', target, downDict);
-            }
-          };
-
-          if (touches.length) {
-            slice.call(touches).forEach(handleTouch);
-          } else {
-            handleTouch(touches[0]);
-          }
-        },
         move: function(e, type) {
-          var touches = e.targetTouches;
+          var touches = e.targetTouches,
+            touchCanceled,
+            touchDispatched;
 
           var handleTouch = function(touch) {
             var id = touch.identifier,
@@ -1048,31 +962,51 @@
 
             if (!touchData) return;
 
+            // prevent click firing on scroll stop by touch surface
+            // .. for iOS
+            if (isIOS) {
+              fixIOSScroll(touchData);
+            }
+
+            if (touchData.ignoreTouch) return;
+
+            var fireTouchEvents = hasTouchListeners && flags.TOUCH_EVENTS,
+              touchStartCanceled = touchData.touchStartCanceled;
+
+            if (fireTouchEvents && !touchDispatched) {
+              touchDispatched = true;
+              touchCanceled = !dispatchTouchEvent('move', touchData.startTarget, e);
+            }
+
             var lastEnterTarget = touchDevice.lastEnterTarget,
               pointer = touchData.pointer,
               isPrimary = pointer.isPrimary,
-              prevTarget = touchData.prevTarget;
+              prevTarget = touchData.prevTarget,
+              touchAction = touchData.touchAction,
+              // getting new target for event not more than once per 10ms
+              getTarget = touchData.getTarget ||
+                (touchData.getTarget = debunce(doHitTest, 10, false)),
+              target = getTarget(touch) || prevTarget,
+              isFirstMove,
+              fireMouseEvents;
 
-            if (touchData.ignoreTouch) {
-              return;
-            }
+            !touchCanceled && (touchData.fireMouseEvents = touchCanceled);
+            fireMouseEvents = touchData.fireMouseEvents;
+            touchData.touchMoveCanceled = touchCanceled;
 
-            var getTarget = touchData.getTarget ||
-              (touchData.getTarget = debunce(function(touch) {
-                var target = document.elementFromPoint(
-                  touch.clientX, touch.clientY);
-
-                return target;
-              }, 10, false));
-
-            var target = getTarget(touch) || prevTarget;
-
-            if (isPrimary) {
-              touchData.moved = true;
+            if (isPrimary && !touchData.moved) {
+              touchData.moved = isFirstMove = true;
             }
 
             if (target !== prevTarget) {
-              handleTouchMove(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchMove(
+                touch,
+                touchData,
+                pointer,
+                isPrimary,
+                target,
+                prevTarget
+              );
             }
 
             var moveDict = getMouseDict(touch, {
@@ -1083,37 +1017,85 @@
               relatedTarget: null
             });
 
-            var canceled = !pointer.dispatchEvent(target, 'move', moveDict);
+            var canceled = !pointer.dispatchEvent(target, 'move', moveDict)
+              && isFirstMove;
 
-            if (isPrimary && !touchDevice.mouseEventsPrevented) {
-              canceled ||
-                (canceled = !dispatchMouseEvent('move', target, moveDict));
+            if (!isPrimary) return;
+
+            var movedOut = checkForMovedOut(touchData, touch, isFirstMove);
+
+            /*var startTouch = touchData.startTouch,
+              slopSize = flags.TOUCHMOVE_SLOP_SIZE;
+
+            if (!movedOut && (isAndroid && isFirstMove) ||
+                abs(startTouch.clientX - touch.clientX) >= slopSize ||
+                abs(startTouch.clientY - touch.clientY) >= slopSize) {
+              movedOut = touchData.movedOut = true;
+              touchData.needFastClick = false;
+
+              logger.log('Pointer moved out of slop');
+            }*/
+
+            if (fireMouseEvents && !touchDevice.mouseEventsPrevented) {
+              dispatchMouseEvent('move', target, moveDict);
             }
 
-            if (canceled) {
+            // prevent scroll if move canceled -- wrong
+            // this should be only for canceling touchmove
+            // -------------------------------------------
+            // or if no touchAction for this element and
+            // this is Android or something else and moved out
+            if (touchCanceled || (!touchAction && movedOut &&
+              // for touchStartCanceled this work already did
+              !touchStartCanceled)
+            ) {
+              console.log('cancel fast click by moved out');
+              touchData.needFastClick = false;
+              console.log('prevent touchmove by !touchAction');
               e.preventDefault();
+
+              // remove touchmove listeners here
+              return;
             }
 
-            if (isPrimary && !touchDevice.mouseEventsPrevented && !canceled) {
+            // commented 2 options which check that touch is prevented or not
+            // this is should only be checked from Touch Events cancelation
+            // not from Pointer Events
+            if (touchAction && !touchStartCanceled && !touchCanceled) {
               // cannot detect opera via isChrome but Ya and Cr is
-              var needIgnore = isAndroid && !isChrome;
+              var needIgnore = isAndroid &&
+                (flags.DETECT_CHROME_BEHAVIOR ? !isChrome : true);
 
-              if (!isAndroid) {
-                var startTouch = touchData.startTouch,
-                  xMin = startTouch.clientX - 10,
-                  xMax = startTouch.clientX + 10,
-                  yMin = startTouch.clientY - 10,
-                  yMax = startTouch.clientY + 10;
+              if (!isAndroid && movedOut) {
+                needIgnore = true;
+              }
 
-                if (xMin > touch.clientX || xMax < touch.clientX ||
-                  yMin > touch.clientY || yMax < touch.clientY) {
-                  needIgnore = true;
-                }
+              var startTarget = touchData.startTarget;
+
+              if (touchData.startTargetNodeName === 'input' &&
+                  startTarget.type === 'range') {
+                needIgnore = false;
               }
 
               if (needIgnore) {
                 touchData.ignoreTouch = true;
-                handleTouchCancel(touch, touchData, pointer, isPrimary, target, prevTarget);
+                touchData.needFastClick = false;
+                console.log('cancled fast click be ignore');
+
+                handleTouchCancel(
+                  touch,
+                  touchData,
+                  pointer,
+                  isPrimary,
+                  target,
+                  prevTarget,
+                  e
+                );
+              }
+
+              if (mayNeedFastClick) {
+                unbindScrollFix(touchDevice.prevPrimaryTouch);
+                bindScrollFix(touchData);
               }
             }
           };
@@ -1141,50 +1123,54 @@
               target = getTarget && getTarget(touch) || prevTarget;
 
             if (isPrimary) {
+              touchData.timedOut =
+                e.timeStamp - touchData.startTime >= TOUCH_CLICK_TIMEOUT;
               touchData.ended = true;
             }
 
             if (!touchData.ignoreTouch && prevTarget !== target) {
-              handleTouchMove(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchMove(
+                touch,
+                touchData,
+                pointer,
+                isPrimary,
+                target, 
+                prevTarget
+              );
             }
 
+            var touchCanceled = !dispatchTouchEvent('end', touchData.startTarget,
+                e, document.createTouchList(touch)),
+              fireTouchEvents;
+
+            !touchCanceled && (touchData.fireMouseEvents = touchCanceled);
+            touchData.touchEndCanceled = touchCanceled;
+/*
             touchesMap[id] = null;
             touchDevice.lastEnterTarget = null;
-            touchDevice.mouseEventsPrevented = false;
+            
+            if (isPrimary) {
+              touchDevice.mouseEventsPrevented = false;
+            }*/
+
+            console.log('ignore end:', touchData.ignoreTouch);
 
             if (!touchData.ignoreTouch) {
-              handleTouchEnd(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchEnd(touch, touchData, pointer,
+                isPrimary, target, prevTarget, e);
             }
+
+            cleanUpTouch(touchData);/*
 
             pointer.destroy();
 
             if (isPrimary && touchData.clicked) {
-              touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-              touchDevice.currentPrimaryTouch = null;
+              updateDevicePrimary();
+            }*/
+
+            if (!e.targetTouches.length) {
+              removeTouchBindings(touchData.startTarget, type);
             }
-
-            /*var style = touchData.style
-
-            if (!isPrimary || !style) return;
-
-            if (style.msTouchAction === 'none' ||
-                style.touchAction === 'none' ||
-                touchData.startTarget
-                  .getAttribute('touch-action') === 'none') return;
-
-            e.preventDefault();
-
-            var clickEvent = getMouseDict(touch, {
-              bubbles: true,
-              cancelable: true,
-              button: 0,
-              buttons: 1,
-              relatedTarget: null
-            });
-
-            clickEvent = new MouseEvent('click', clickEvent);
-            clickEvent._fastClick = true;
-            target.dispatchEvent(clickEvent);*/
           };
 
           if (touches.length) {
@@ -1211,21 +1197,31 @@
 
             if (isPrimary) {
               touchData.ended = true;
+              touchData.canceled = true;
             }
 
-            touchesMap[id] = null;
+            /*touchesMap[id] = null;
             touchDevice.lastEnterTarget = null;
-            touchDevice.mouseEventsPrevented = false;
+
+            if (isPrimary) {
+              touchDevice.mouseEventsPrevented = false;
+            }*/
 
             if (!touchData.ignoreTouch) {
-              handleTouchCancel(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchCancel(touch, touchData, pointer,
+                isPrimary, target, prevTarget, e);
             }
 
-            pointer.destroy();
+            cleanUpTouch(touchData);
+
+            /*pointer.destroy();
 
             if (isPrimary && touchData.clicked) {
-              touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-              touchDevice.currentPrimaryTouch = null;
+              updateDevicePrimary();
+            }*/
+
+            if (!e.targetTouches.length) {
+              removeTouchBindings(touchData.startTarget, type);
             }
           };
 
@@ -1237,9 +1233,312 @@
         }
       };
 
+    var TOUCH_SCROLL_CACHE = 'touch_scroll_cache',
+      TOUCH_LISTENERS_CACHE = 'touch_listeners_cache',
+      SCROLL_FIX_DELAY = 500,
+      TOUCH_CLICK_TIMEOUT = 800;
+
+    var initTouchStart = function(e, type) {
+      var touches = e.changedTouches,
+        self = this;
+
+      var handleTouch = function(touch) {
+        var id = touch.identifier,
+          lastEnterTarget = touchDevice.lastEnterTarget,
+          outdatedTouch = touchesMap[id];
+
+        // cannot handle more than one touch with same id
+        if (outdatedTouch) {
+          outdatedTouch.revoked = true;
+
+          /*touchesMap[id] = null;
+          touchDevice.lastEnterTarget = null;
+          
+          if (outdatedTouch.pointer.isPrimary) {
+            touchDevice.mouseEventsPrevented = false;
+          }
+
+          if (outdatedTouch.pointer.isPrimary && touchData.clicked) {
+            updateDevicePrimary();
+          }
+
+          outdatedTouch.pointer.destroy();*/
+
+          cleanUpTouch(outdatedTouch);
+          console.log('prevent touchstart by not id');
+        }
+
+        var target = touch.target,
+          startTouch = {},
+          pointer = touchDevice.createPointer(),
+          nodeTouchListeners = Sync.cache(self)[TOUCH_LISTENERS_CACHE],
+          fireTouchEvents = hasTouchListeners && flags.TOUCH_EVENTS,
+          touchCanceled = fireTouchEvents &&
+            !dispatchTouchEvent('start', target, e, document.createTouchList(touch));
+
+        // firefox properties are from prototype
+        // and cannot be moved by Object.keys
+        /*for (var touchKey in touch) {
+          startTouch[touchKey] = touch[touchKey];
+        }*/
+
+        extendDOMObject(startTouch, touch);
+        pointer.buttons = 1;
+
+        var overDict = getMouseDict(touch, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          relatedTarget: null // prev target goes here
+        }),
+        downDict = getMouseDict(touch, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          relatedTarget: null
+        }),
+        isPrimary = pointer.isPrimary,
+        needFastClick = isPrimary && mayNeedFastClick,
+        needEnter = (!lastEnterTarget || !lastEnterTarget !== target),
+        computed = isPrimary && getComputedStyle(target),
+        parents,
+        fireMouseEvents;
+
+        var touchData = touchesMap[id] = {
+          pointer: pointer,
+          startTime: e.timeStamp,
+          startTouch: startTouch,
+          startTarget: target,
+          prevTarget: target,
+          multitouch: !isPrimary,
+          computed: isPrimary && computed,
+          touchId: id,
+          touchStartCanceled: touchCanceled,
+          _fireMouseEvents: !touchCanceled && isPrimary && flags.MOUSE_EVENTS,
+          get fireMouseEvents() {
+            return hasMouseListeners && this._fireMouseEvents;
+          },
+          set fireMouseEvents(val) {
+            this._fireMouseEvents = val;
+          },
+          get startTargetNodeName() {
+            var nodeName = this._startTargetNodeName;
+
+            if (!nodeName) {
+              nodeName = this._startTargetNodeName =
+                this.startTarget.nodeName.toLowerCase();
+            }
+
+            return nodeName;
+          }
+        };
+
+        /*if (!isPrimary) {
+          touchDevice.primary.multitouch = true;
+        }*/
+
+        fireMouseEvents = touchData.fireMouseEvents;
+
+        if (touchCanceled) {
+          e.preventDefault();
+          // if touchstart is canceled:
+          // no more touch-action
+          // no more click
+          // no more scroll
+          // no more compatibility mouse events
+
+          console.log('cacled fast click by touch cancled');
+          needFastClick = false;
+          touchAction = false;
+        } else if (isPrimary) {
+          parents = findScrollParent(target, computed);
+
+          var touchAction = true,
+            determinedAction,
+            scrollables = [];
+
+          parents.forEach(function(parent) {
+            var element = parent.element;
+
+            if (parent.scrollable) {
+              scrollables.push(parent);
+            }
+
+            if (!determinedAction) {
+              var computed = parent.computed || getComputedStyle(element),
+                action = getTouchAction(element, computed);
+
+              if (action === 'none') {
+                touchAction = false;
+                determinedAction = true;
+              }
+
+              if (parent.scrollable) {
+                determinedAction = true;
+              }
+            }
+
+            // after first parent touchAction must be determined already
+            if (parent.scrollable && touchAction) {
+              parent.scrollLeft = parent.element.scrollLeft;
+              parent.scrollTop = parent.element.scrollTop;
+            }
+          });
+
+          if (touchAction) {
+            scrollables.push({
+              isWin: true,
+              scrollLeft: window.pageXOffset,
+              scrollTop: window.pageYOffset,
+              element: window
+            });
+
+            touchData.scrollables = scrollables;
+          }
+
+          // !touchAction === noScroll
+          touchData.touchAction = touchAction;
+          updateDevicePrimary(touchData);
+        }
+
+        if (!flags.IMMEDIATE_POINTER_LEAVE &&
+            lastEnterTarget && !lastEnterTarget.contains(target)) {
+          // this block should be uncommented if leave event should be fired
+          // not from pointerup/pointercancel event, but from pointerdown
+
+          pointer.dispatchEvent(lastEnterTarget, 'leave', getMouseDict(touch, {
+            bubbles: false,
+            cancelable: false,
+            button: 0,
+            buttons: 0,
+            relatedTarget: target
+          }));
+        }
+
+        fireMouseEvents && dispatchMouseEvent(
+          'move',
+          target,
+          getMouseDict(touch, {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: 0,
+            relatedTarget: null
+          })
+        );
+
+        // pointerover
+        pointer.dispatchEvent(target, 'over', overDict);
+
+        // compact mouseover
+        fireMouseEvents && dispatchMouseEvent('over', target, overDict);
+
+        if (needEnter) {
+          var enterDict = getMouseDict(touch, {
+            bubbles: false,
+            cancelable: false,
+            button: 0,
+            buttons: 0,
+            relatedTarget: lastEnterTarget
+          });
+
+          pointer.dispatchEvent(target, 'enter', enterDict);
+
+          // compact mouseenter
+          fireMouseEvents && dispatchMouseEvent('enter', target, enterDict);
+
+          touchDevice.lastEnterTarget = target;
+        }
+
+        // pointerdown
+        var canceled = !pointer.dispatchEvent(target, 'down', downDict);
+
+        if (canceled) {
+          // canceled pointerdown should prevent default actions
+          // e.g. selection or focus
+          // canceled pointerdown should _not_ prevent click or scroll
+          // on e.preventDefault() we can simulate click, but cannot simulate scroll
+          // so that method cannot be used, at least right now
+
+          // needFastClick = true;
+          // e.preventDefault();
+          // logger.log('Prevented pointerdown');
+
+          // prevent compatibility mouse events
+          touchDevice.mouseEventsPrevented = true;
+        }
+
+        // compact mousedown
+        if (fireMouseEvents && !canceled) {
+          dispatchMouseEvent('down', target, downDict);
+        }
+
+        // this is case from fastclick.js library
+        // in iOS only trusted events can deselect range
+        // ...
+        // in future we can simulate that action and remove this block
+        if (!touchCanceled && isIOS) {
+          var selection = window.getSelection();
+
+          if (selection.rangeCount && !selection.isCollapsed) {
+            needFastClick = false;
+            logger.log('needFastClick = false; By range deselect iOS');
+            console.log('needFastClick = false; By range deselect iOS');
+          }
+        }
+
+        touchData.needFastClick = needFastClick;
+        addTouchBindings(target, type);
+      };
+
+      if (touches.length) {
+        slice.call(touches).forEach(handleTouch);
+      } else {
+        handleTouch(touches[0]);
+      }
+    },
+    addTouchBindings = function(node, event) {
+      Sync.each(touchBindings, function(fn, key) {
+        var full = TOUCH_PREFIX + key;
+
+        events.addEvent(node, full, {
+          handler: function(e) {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            // console.log('called touch binding:', key);
+
+            fn.call(this, e, event);
+          },
+          callback: fn,
+          capture: /*capture*/ true,
+          method: touchNatives[full].addEventListener,
+          namespace: NS_TOUCH_POINTER
+        });
+      });
+    },
+    removeTouchBindings = function(node, event) {
+      Sync.each(touchBindings, function(fn, key) {
+        var full = TOUCH_PREFIX + key;
+
+        events.removeEvent(node, full, {
+          callback: fn,
+          capture: /*capture*/ true,
+          method: touchNatives[full].removeEventListener,
+          namespace: NS_TOUCH_POINTER
+        });
+      });
+    };
+
     var dispatchMouseEvent = function(event, target, dict) {
       if (!dict.view) {
         dict.view = target.defaultView;
+      }
+
+      if (event === 'over') {
+        // debugger;
       }
 
       return events.dispatchEvent(target, FAKE_PREFIX + MOUSE_PREFIX + event, {
@@ -1247,21 +1546,120 @@
         options: dict
       });
     },
-    getMouseDict = function(touch, options) {
+    dispatchTouchEvent = function(type, target, originalEvent, changedTouches) { return true;
+      var newEvent = new UIEvent(FAKE_PREFIX + TOUCH_PREFIX + type, {
+        bubbles: originalEvent.bubbles,
+        cancelable: originalEvent.cancelable,
+        view: originalEvent.view,
+        detail: originalEvent.detail
+      });
+
+      newEvent.touches = originalEvent.touches;
+      newEvent.targetTouches = originalEvent.targetTouches;
+      newEvent.changedTouches = changedTouches || originalEvent.changedTouches;
+
+      /*(originalEvent.ctrlKey, originalEvent.altKey,
+        originalEvent.shiftKey, originalEvent.metaKey, originalEvent.touches,
+        originalEvent.targetTouches, changedTouches || originalEvent.changedTouches,
+        originalEvent.scale, originalEvent.rotation);*/
+
+      console.log(newEvent);
+
+      return target.dispatchEvent(newEvent);
+    },
+    cleanUpTouch = function(touchData) {
+      var pointer = touchData.pointer,
+        isPrimary = touchData.pointer.isPrimary;
+
+      touchesMap[touchData.touchId] = null;
+      touchDevice.lastEnterTarget = null;
+      
+      if (isPrimary) {
+        touchDevice.mouseEventsPrevented = false;
+      }
+
+      pointer.destroy();
+
+      if (isPrimary && touchData.clicked) {
+        updateDevicePrimary();
+      }
+
+      pointer = touchData = null;
+    },
+    doHitTest = function(touch) {
+      // and handle of pointer-events: none;
+      var target = document.elementFromPoint(
+        touch.clientX, touch.clientY);
+
+      return target;
+    },
+    getTouchAction = function(element, computed) {
+      var action = computed.touchAction || computed.content
+        .split(/\s*;\s*/).reduce(function(result, rule) {
+          if (result) {
+            return result;
+          }
+
+          rule = rule.split(/\s*:\s*/);
+
+          if (rule[0] === 'touch-action') {
+            return rule[1];
+          }
+
+          return result;
+        }, '');
+
+      return action;
+    },
+    getMouseDict = function(touch, options, show) {
       options || (options = {});
 
       [
         'screenX', 'screenY',
         'clientX', 'clientY',
+        'pageX', 'pageY',
         'ctrlKey', 'altKey',
         'shiftKey', 'metaKey'
       ].forEach(function(prop) {
-        options[prop] = touch[prop];
+        var z = touch[prop];
+
+        if (z === 'pageX') {
+          z += pageXOffset;
+        }
+
+        if (z === 'pageY') {
+          z += pageYOffset;
+        }
+
+        options[prop] = z;
+
+        if (show) {
+          // console.log(prop + ':', z);
+        }
       });
 
       return options;
     },
+    checkForMovedOut = function(touchData, touch, isFirstMove) {
+      var startTouch = touchData.startTouch,
+        slopSize = flags.TOUCHMOVE_SLOP_SIZE,
+        movedOut = touchData.movedOut;
+
+      if (!movedOut && (isAndroid && isFirstMove) ||
+          abs(startTouch.clientX - touch.clientX) >= slopSize ||
+          abs(startTouch.clientY - touch.clientY) >= slopSize) {
+        movedOut = touchData.movedOut = true;
+        touchData.needFastClick = false;
+        console.log('canceld fast click by check for move');
+
+        logger.log('Pointer moved out of slop');
+      }
+
+      return movedOut;
+    },
     handleTouchMove = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
+      var fireMouseEvents = touchData.fireMouseEvents;
+
       touchData.prevTarget = target;
 
       var outDict = getMouseDict(touch, {
@@ -1270,10 +1668,24 @@
         button: 0,
         buttons: 1,
         relatedTarget: target // prev target goes here
+      }),
+      overDict = getMouseDict(touch, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        relatedTarget: prevTarget // prev target goes here
+      }),
+      enterDict = getMouseDict(touch, {
+        bubbles: false,
+        cancelable: false,
+        button: 0,
+        buttons: 1,
+        relatedTarget: prevTarget // prev target goes here
       });
 
       pointer.dispatchEvent(prevTarget, 'out', outDict);
-      isPrimary && dispatchMouseEvent('out', prevTarget, outDict);
+      fireMouseEvents && dispatchMouseEvent('out', prevTarget, outDict);
 
       if (!prevTarget.contains(target)) {
         var leaveDict = getMouseDict(touch, {
@@ -1285,32 +1697,21 @@
         });
 
         pointer.dispatchEvent(prevTarget, 'leave', leaveDict);
-        isPrimary && dispatchMouseEvent('leave', prevTarget, leaveDict);
+        fireMouseEvents && dispatchMouseEvent('leave', prevTarget, leaveDict);
       }
 
-      var overDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 1,
-        relatedTarget: prevTarget // prev target goes here
-      });
-
       pointer.dispatchEvent(target, 'over', overDict);
-      isPrimary && dispatchMouseEvent('over', target, overDict);
-
-      var enterDict = getMouseDict(touch, {
-        bubbles: false,
-        cancelable: false,
-        button: 0,
-        buttons: 1,
-        relatedTarget: prevTarget // prev target goes here
-      });
+      fireMouseEvents && dispatchMouseEvent('over', target, overDict);
 
       pointer.dispatchEvent(target, 'enter', enterDict);
-      isPrimary && dispatchMouseEvent('enter', target, enterDict);
+      fireMouseEvents && dispatchMouseEvent('enter', target, enterDict);
     },
-    handleTouchCancel = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
+    handleTouchCancel = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
+      var fireMouseEvents = touchData.fireMouseEvents;
+
+      dispatchTouchEvent('cancel', touchData.startTarget,
+        e, document.createTouchList(touch));
+
       var cancelDict = getMouseDict(touch, {
         bubbles: true,
         cancelable: false,
@@ -1324,28 +1725,15 @@
         button: 0,
         buttons: 0,
         relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'cancel', cancelDict);
-
-      if (isPrimary && !touchDevice.mouseEventsPrevented) {
-        dispatchMouseEvent('up', window, upDict)
-      }
-
-      // simulate click may goes here
-
-      var outDict = getMouseDict(touch, {
+      }),
+      outDict = getMouseDict(touch, {
         bubbles: true,
         cancelable: true,
         button: 0,
         buttons: 0,
         relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'out', outDict);
-      isPrimary && dispatchMouseEvent('out', target, outDict);
-
-      var leaveDict = getMouseDict(touch, {
+      }),
+      leaveDict = getMouseDict(touch, {
         bubbles: false,
         cancelable: false,
         button: 0,
@@ -1353,11 +1741,23 @@
         relatedTarget: null
       });
 
+      pointer.dispatchEvent(target, 'cancel', cancelDict);
+      fireMouseEvents && dispatchMouseEvent('up', window, upDict)
+
+      pointer.dispatchEvent(target, 'out', outDict);
+      fireMouseEvents && dispatchMouseEvent('out', target, outDict);
+
       // this pointer call is under question
-      pointer.dispatchEvent(target, 'leave', leaveDict);
-      isPrimary && dispatchMouseEvent('leave', target, leaveDict);
+      
+      if (flags.IMMEDIATE_POINTER_LEAVE) {
+        pointer.dispatchEvent(target, 'leave', leaveDict);
+      }
+
+      fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
     },
-    handleTouchEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
+    handlePreEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
+      var fireMouseEvents = touchData.fireMouseEvents;
+
       var upDict = getMouseDict(touch, {
         bubbles: true,
         cancelable: true,
@@ -1366,18 +1766,11 @@
         relatedTarget: null
       });
 
-      var canceled = !pointer.dispatchEvent(target, 'up', upDict);
-
-      if (isPrimary && !touchDevice.mouseEventsPrevented) {
-        canceled ||
-        (canceled = !dispatchMouseEvent('up', target, upDict));
-      }
-
-      if (canceled) {
-        e.preventDefault();
-      }
-
-      // simulate click may goes here
+      pointer.dispatchEvent(target, 'up', upDict);
+      fireMouseEvents && dispatchMouseEvent('up', target, upDict);
+    },
+    handlePastEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
+      var fireMouseEvents = touchData.fireMouseEvents;
 
       var outDict = getMouseDict(touch, {
         bubbles: true,
@@ -1385,12 +1778,8 @@
         button: 0,
         buttons: 0,
         relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'out', outDict);
-      isPrimary && dispatchMouseEvent('out', target, outDict);
-
-      var leaveDict = getMouseDict(touch, {
+      }),
+      leaveDict = getMouseDict(touch, {
         bubbles: false,
         cancelable: false,
         button: 0,
@@ -1398,33 +1787,459 @@
         relatedTarget: null
       });
 
+      pointer.dispatchEvent(target, 'out', outDict);
+      fireMouseEvents && dispatchMouseEvent('out', target, outDict);
+
       // this pointer call is under question
-      pointer.dispatchEvent(target, 'leave', leaveDict);
-      isPrimary && dispatchMouseEvent('leave', target, leaveDict);
+      // because of specification undefined position of that
+      if (flags.IMMEDIATE_POINTER_LEAVE) {
+        pointer.dispatchEvent(target, 'leave', leaveDict);
+      }
+
+      fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
+    },
+    handleTouchEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
+      /*var fireMouseEvents = touchData.fireMouseEvents;
+
+      var pastClick = function() {
+        var outDict = getMouseDict(touch, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          relatedTarget: null
+        }),
+        leaveDict = getMouseDict(touch, {
+          bubbles: false,
+          cancelable: false,
+          button: 0,
+          buttons: 0,
+          relatedTarget: null
+        });
+
+        pointer.dispatchEvent(target, 'out', outDict);
+        fireMouseEvents && dispatchMouseEvent('out', target, outDict);
+
+        // this pointer call is under question
+        // because of specification undefined position of that
+        if (flags.IMMEDIATE_POINTER_LEAVE) {
+          pointer.dispatchEvent(target, 'leave', leaveDict);
+        }
+
+        fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
+      };
+
+      var upDict = getMouseDict(touch, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 0,
+        relatedTarget: null
+      });
+
+      pointer.dispatchEvent(target, 'up', upDict);
+      fireMouseEvents && dispatchMouseEvent('up', target, upDict);*/
+
+      if (touchData.clicked) return;
+
+      var movedOut = touchData.moved ? touchData.movedOut :
+        checkForMovedOut(touchData, touch),
+        // get needFastClick after
+        // possibly call of checkForMovedOut
+        needFastClick = touchData.needFastClick,
+        timedOut = touchData.timedOut;
+
+      // 'intent to click' should be determined on touchend base on current flags
+      // if timed-out no intent to click, try to prevent real click and do not fire fast-click
+      // if ignoreTouch then no intent to click
+      // if current target !== start target also not intent to click
+      // keep 'clicked' as separate flag e.g. intentToClick && !clicked
+      // also cancelation of touch events going to prevent click
+      // but 100% only consumed touchstart prevent click
+      // therefore need to check for canceled only touchend
+      // because touchmove is tracked by 'ignoreTouch' flag
+
+      var intentToClick = !touchData.touchEndCanceled &&
+        !timedOut && !touchData.ignoreTouch && target === touchData.startTarget;
+
+      touchData.intentToClick = intentToClick;
+
+      if (!intentToClick) {
+        console.log('prevent touchend by !intentToClick');
+        e.preventDefault();
+      }
+
+      var isNeedFastClick = intentToClick && !touchData.clicked &&
+        needFastClick && !noElementFastClick(target);
+
+      // intentToClick && isNeedFastClick does not match all cases
+      // so there exists real clicks, not prevented and not emulated via fast-click
+      // therefore prevent touchend only then intentToClick || isNeedFastClick
+
+      handlePreEnd(touch, touchData, pointer,
+        isPrimary, target, prevTarget, e);
+
+      if (isNeedFastClick) {
+        // try to prevent trusted click via canceling touchend
+        // this does not work in Android Stock < 4.4
+
+        console.log('prevent touchend by isNeedFastClick');
+        e.preventDefault();
+
+        handleFastClick(touch, touchData, pointer,
+          isPrimary, target, prevTarget);
+
+        handlePastEnd(touch, touchData, pointer,
+          isPrimary, target, prevTarget, e);
+      } else /*if (touchData.cliked) {
+        // there is possible case then click is fired before touchend
+        // in that situations for best synced events sequence probably need to defer click
+        // (i.e. prevent real and sent synthetic in touchend) or
+        // handle touchend in click event
+
+        pastClick();
+      } else*/ if (intentToClick) {
+        touchData.needPastClick = true;
+      }
+
+      console.log('touches:', e.changedTouches.length, e.targetTouches.length, e.touches.length);
+    },
+    handleFastClick = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
+      var computed = touchData.computed;
+
+      var clickEventDict = getMouseDict(touch, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          relatedTarget: null,
+          view: window,
+          detail: 1
+        }),
+        clickEvent = new MouseEvent('click', clickEventDict),
+        activeElement = document.activeElement;
+
+      if (isChromeAndroid && activeElement !== target &&
+        isFocusable(activeElement)
+      ) {
+        console.log('call blur');
+        activeElement.blur();
+      }
+
+      if (isChromeAndroid/* || isBB10*/ /* && target.nodeName.toLowerCase() === 'select'*/) {
+        var mouseDown = new MouseEvent('mousedown', clickEventDict);
+
+        mouseDown.isFastClick = true;
+        target.dispatchEvent(mouseDown);
+      }
+
+      if (/*target !== activeElement &&*/ needFocus(target)) {
+        // also can tweak with placeCaret chrome android with scaled viewport
+        if (!isIOS || !placeCaret(target, computed, clickEvent.clientX, clickEvent.clientY)) {
+          target.focus();
+        }
+      }
+
+      if (isChromeAndroid/* || isBB10*/ /* && target.nodeName.toLowerCase() === 'select'*/) {
+        var mouseUp = new MouseEvent('mouseup', clickEventDict);
+
+        mouseUp.isFastClick = true;
+        target.dispatchEvent(mouseUp);
+      }
+
+      clickEvent.isFastClick = true;
+      target.dispatchEvent(clickEvent);
+
+      touchData.fastClicked = true;
+      // console.log('click dispatched');
+    },
+    fixIOSScroll = function(touchData) {
+      var scrolledParent,
+        movedOut = touchData.movedOut;
+
+      if (!movedOut || touchData.scrollClickFixed) return;
+
+      if (touchData.scrollables.some(function(parent) {
+        var element = parent.element;
+
+        if (parent.isWin) {
+          var scrollLeft = window.pageXOffset,
+            scrollTop = window.pageYOffset;
+        } else {
+          scrollLeft = element.scrollLeft;
+          scrollTop = element.scrollTop;
+        }
+
+        if (parent.scrollLeft !== scrollLeft ||
+            parent.scrollTop !== scrollTop) {
+          scrolledParent = parent;
+          return true;
+        }
+      })) {
+        touchData.scrollClickFixed = true;
+
+        var scrolledForStyle = scrolledParent.isWin ?
+          document.documentElement : scrolledParent.element,
+          scrolledForEvent = scrolledParent.element,
+          prevCSSPointerEvents = scrolledForStyle.style.pointerEvents;
+
+        scrolledForStyle.style.pointerEvents = 'none !important';
+
+        scrolledForEvent.addEventListener('scroll', function scrollHandler() {
+          scrolledForEvent.removeEventListener('scroll', scrollHandler);
+          scrolledForStyle.style.pointerEvents = prevCSSPointerEvents;
+        });
+
+        // prevent pointer events until scrolled
+      }
+    },
+    bindScrollFix = function(touchData) {
+      if (isIOS || !touchData || touchData.scrollClickFixed) return;
+
+      var scrollables = touchData.scrollables;
+
+      touchData.scrollClickFixed = true;
+
+      scrollables.forEach(function(parent) {
+        var element = parent.element,
+          scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE),
+          scrollTimer,
+
+          firstScroll = true,
+          scrollStyleElem,
+          prevCSSPointerEvents;
+
+        if (scrollCache.scrollHandler) return;
+
+        // if (!element) return;
+
+        var scrollHandler = function() {
+          if (firstScroll) {
+            firstScroll = false;
+
+            // console.log('first scroll', element);
+
+            scrollStyleElem = parent.isWin ?
+              document.documentElement : parent.element;
+            prevCSSPointerEvents = scrollStyleElem.style.pointerEvents;
+
+            if (prevCSSPointerEvents === 'none') alert(13);
+
+            scrollStyleElem.style.pointerEvents = 'none';
+            scrollCache.styleElem = scrollStyleElem;
+            scrollCache.prevCSSPointerEvents = prevCSSPointerEvents;
+            // console.log('bind:');
+          }
+
+          if (scrollTimer) clearTimeout(scrollTimer);
+
+          scrollTimer = setTimeout(function() {
+            scrollTimer = null;
+            unbindScrollFix(touchData);
+          }, SCROLL_FIX_DELAY);
+        };
+
+        scrollCache.scrollHandler = scrollHandler;
+        element.addEventListener('scroll', scrollHandler);
+      });
+    },
+    unbindScrollFix = function(touchData) {
+      if (isIOS || !touchData || !touchData.scrollClickFixed) return;
+
+      var scrollables = touchData.scrollables;
+
+      touchData.scrollClickFixed = false;
+
+      // console.log('unbind:');
+
+      scrollables.forEach(function(parent) {
+        var element = parent.element,
+          scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE);
+
+        if (scrollCache.styleElem) {
+          scrollCache.styleElem.style.pointerEvents = scrollCache.prevCSSPointerEvents;
+          // console.log('set prev events:', scrollCache.styleElem.style.pointerEvents);
+
+          scrollCache.styleElem = null;
+          scrollCache.prevCSSPointerEvents = '';
+        }
+
+        if (scrollCache.scrollHandler) {
+          element.removeEventListener('scroll', scrollCache.scrollHandler);
+          scrollCache.scrollHandler = null;
+        }
+      });
+    },
+    noElementFastClick = function(target) {
+      var nodeName = target.nodeName.toLowerCase();
+
+      if (isBB10 && nodeName === 'input' && target.type === 'file') {
+        return true;
+      }
+
+      if (isAndroidStock) {
+        if (nodeName === 'input' && target.type === 'range') {
+          return true;
+        }
+      }
+
+      if (isChromeAndroid) {
+        if (nodeName === 'textarea') return true;
+        if (nodeName === 'input') {
+          switch (target.type) {
+            case 'text':
+            case 'email':
+            case 'number':
+            case 'tel':
+            case 'url':
+            case 'search':
+              return true;
+          }
+        }
+      }
+    },
+    needFocus = function(target) {
+      var disabled = target.disabled || target.readOnly;
+
+      switch (target.nodeName.toLowerCase()) {
+        case 'textarea':
+          return isIOS; // !disabled && (!isAndroidFx && !isChromeAndroid && !isBB10);
+        case 'select':
+          return !disabled && isAndroidFx || isIOS;
+        case 'input': {
+          if (disabled) return false;
+
+          switch (target.type) {
+            case 'button':
+            case 'checkbox':
+            case 'file':
+            case 'image':
+            case 'radio':
+            case 'submit': {
+              return isAndroidFx;
+            }
+
+            case 'range': {
+              return !isChromeAndroid && !isBB10;
+            }
+          }
+
+          return !isAndroidStock && !isAndroidFx;
+        }
+      }
+    },
+    isFocusable = function(target) {
+      var disabled = target.disabled || target.readOnly;
+
+      if (disabled) return false;
+
+      switch (target.nodeName.toLowerCase()) {
+        case 'textarea':
+        case 'select':
+        case 'button':
+          return true;
+        case 'input': {
+          return target.type !== 'hidden';
+        }
+      }
+
+      if (target.tabIndex >= 0) return true;
+
+      return target.contentEditable === 'true';
+    },
+    placeCaret = function(target, computed, x, y) {
+      var nodeName = target.nodeName.toLowerCase();
+
+      if (!document.caretRangeFromPoint ||
+         nodeName !== 'textarea' && nodeName !== 'input') return;
+
+      pickInput: if (nodeName === 'input') {
+        switch (target.type) {
+          case 'text':
+          case 'email':
+          case 'number':
+          case 'tel':
+          case 'url':
+          case 'search':
+            break pickInput;
+        }
+
+        return;
+      }
+
+      var mirror = document.createElement('div'),
+        mirrorStyle = mirror.style,
+        rect = target.getBoundingClientRect();
+
+      mirrorStyle.cssText = computed.cssText;
+
+      mirrorStyle.margin = 0;
+      mirrorStyle.position = 'absolute';
+      mirrorStyle.opacity = 0;
+      mirrorStyle.zIndex = 999999;
+      mirrorStyle.left = rect.left + pageXOffset + 'px';
+      mirrorStyle.top = rect.top + pageYOffset + 'px';
+
+      mirror.textContent = target.value;
+
+      document.body.append(mirror);
+
+      var range = document.caretRangeFromPoint(x, y);
+      
+      target.setSelectionRange(range.startOffset, range.endOffset);
+      mirror.remove();
+
+      mirror = mirrorStyle = range = null;
+      return true;
+    },
+    updateDevicePrimary = function(touchData) {
+      if (touchDevice.currentPrimaryTouch) {
+        touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
+      }
+      
+      touchDevice.currentPrimaryTouch = touchData || null;;
     };
 
     events.syncEvent('click', function(synced) {
       return {
         addEventListener: function(type, callback, capture) {
+          triggerDeviceListeners(this, type,/* capture,*/ 'touch');
+
           events.addEvent(this, type, {
             handler: function(e) {
-              var touchData = touchDevice.currentPrimaryTouch;
+              var touchData = touchDevice.currentPrimaryTouch,
+                sameTouch = touchData &&
+                  (e.timeStamp - touchData.startTime) < TOUCH_CLICK_TIMEOUT;
 
-              if (!e._fastClick && touchData) {
-                if (!touchData.ended) {
+              if (!e.isFastClick && touchData) {
+                if (sameTouch && !touchData.ended) {
                   touchData.clicked = true;
                 } else {
-                  touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-                  touchDevice.currentPrimaryTouch = null;
+                  updateDevicePrimary();
                 }
               }
 
-              if (touchData && touchData.ignoreTouch) {
+              if (touchData.ended && sameTouch &&
+                (!touchData.intentToClick || touchData.fastClicked)) {
+                console.log('prevent click by not need click');
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
               } else {
+                if (sameTouch && !touchData.ended) {
+                  handlePreEnd(e, touchData, touchData.pointer,
+                    touchData.isPrimary, e.target, touchData.prevTarget, e);
+
+                  console.log('pre end in click');
+                }
+
                 callback.call(this, e);
+
+                if (sameTouch && (!touchData.ended || touchData.needPastClick)) {
+                  console.log('past end in click, ended:', touchData.ended);
+                  handlePastEnd(e, touchData, touchData.pointer,
+                    touchData.isPrimary, e.target, touchData.prevTarget, e);
+                }
               }
             },
             callback: callback,
@@ -1433,6 +2248,8 @@
           });
         },
         removeEventListener: function(type, callback, capture) {
+          muteDeviceListeners(this, type/*, capture*/, 'touch');
+
           events.removeEvent(this, type, {
             callback: callback,
             capture: capture,
@@ -1447,7 +2264,7 @@
         addEventListener: function(type, callback, capture) {
           events.addEvent(this, type, {
             handler: function(e) {
-              var touchData = touchDevice.currentPrimaryTouch;
+              /*var touchData = touchDevice.currentPrimaryTouch;
 
               if (touchData) {
                 if (!touchData.ended) {
@@ -1456,7 +2273,7 @@
                   touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
                   touchDevice.currentPrimaryTouch = null;
                 }
-              }
+              }*/
 
               callback.call(this, e);
             },
@@ -1476,48 +2293,33 @@
     });
 
     touchDevice.bindListener = function(node, event) {
-      /*var binding = touchBindings[event];
+      var full = TOUCH_PREFIX + 'start';
 
-      binding(node, event);*/
+      events.addEvent(node, full, {
+        handler: function(e) {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
 
-      Sync.each(touchBindings, function(fn, key) {
-        var full = TOUCH_PREFIX + key;
-
-        events.addEvent(node, full, {
-          handler: function(e) {
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-
-            fn.call(this, e, event);
-          },
-          callback: fn,
-          capture: /*capture*/ true,
-          method: touchNatives[full].addEventListener,
-          namespace: NS_TOUCH_POINTER
-        });
-      });
-
-      // touchBindings(node, event);
-
-      // method: mouseNatives[type].addEventListener,
-      // namespace: NS_MOUSE_POINTER
-    };
-
-    touchDevice.unbindListener = function(node, event, capture) {
-      Sync.each(touchBindings, function(fn, key) {
-        var full = TOUCH_PREFIX + key;
-
-        events.removeEvent(node, full, {
-          callback: fn,
-          capture: /*capture*/ true,
-          method: touchNatives[full].removeEventListener,
-          namespace: NS_TOUCH_POINTER
-        });
+          initTouchStart.call(this, e, event);
+        },
+        callback: initTouchStart,
+        capture: /*capture*/ true,
+        method: touchNatives[full].addEventListener,
+        namespace: NS_TOUCH_POINTER
       });
     };
 
+    touchDevice.unbindListener = function(node, event) {
+      var full = TOUCH_PREFIX + 'start';
 
-    // no more touch events for this world
+      events.removeEvent(node, full, {
+        callback: initTouchStart,
+        capture: /*capture*/ true,
+        method: touchNatives[full].removeEventListener,
+        namespace: NS_TOUCH_POINTER
+      });
+    };
+
     [
       'start',
       'end',
@@ -1532,9 +2334,39 @@
         touchNatives[full] = synced;
 
         return {
-          addEventListener: function() {},
-          removeEventListener: function() {}
-        }
+          addEventListener: function(type, callback, capture) {
+            triggerDeviceListeners(this, event, 'touch');
+
+            !hasTouchListeners && (hasTouchListeners = true);
+
+            events.handleOnce(this, TOUCH_LISTENERS_CACHE, function() {
+              Sync.cache(this, TOUCH_LISTENERS_CACHE, 1);
+            });
+
+            events.addEvent(this, FAKE_PREFIX + full, {
+              handler: function(e) {
+                e = shadowEventType(e, type);
+                callback.call(this, e);
+              },
+              callback: callback,
+              capture: capture,
+              method: synced.addEventListener
+            });
+          },
+          removeEventListener: function(type, callback, capture) {
+            muteDeviceListeners(this, event, 'touch');
+
+            events.handleIfLast(this, TOUCH_LISTENERS_CACHE, function() {
+              Sync.cache(this, TOUCH_LISTENERS_CACHE, 0);
+            });
+
+            events.addEvent(this, FAKE_PREFIX + full, {
+              callback: callback,
+              capture: capture,
+              method: synced.removeEventListener
+            });
+          }
+        };
       });
     });
   }());

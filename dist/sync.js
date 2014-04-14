@@ -3250,27 +3250,64 @@ requireModule('promise/polyfill').polyfill();
     hasOwn = Object.prototype.hasOwnProperty,
     slice = Array.prototype.slice,
     pow = Math.pow,
+    abs = Math.abs,
     activePointers = {},
     uidInc = 0,
     hasTouch = 'ontouchstart' in document,
     ua = navigator.userAgent.toLowerCase(),
     isV8 = !!(window.v8Intl || (window.Intl && Intl.v8BreakIterator)),
-    isChrome = !!window.chrome,
+    isGecko = (navigator.product || '').toLowerCase() === 'gecko',
+    isAndroidStock = 'isApplicationInstalled' in navigator,
+    isChrome = !!window.chrome && !isAndroidStock,
+    isFx = isGecko && !!navigator.mozApps,
+    isAndroidFx = isFx && (navigator.appVersion || '')
+      .toLowerCase().indexOf('android') !== -1,
     // need to check chrome not by UserAgent
     // chrome for android has not plugins and extensions
     // but on desktop plugins also might be disabled
     // so we need to check by the ability to install extensions
-    isAndroid = ua.indexOf('android') !== -1 ||
-      // detect for v8 to determine that this is not a iOS 
-      isChrome && (!chrome.webstore/* || !chrome.app*/) && isV8,
-    isIOS = !isAndroid && /iP(ad|hone|od)/i.test(navigator.userAgent),
-    isIOSBadTarget = isIOS && (/OS ([6-9]|\d{2})_\d/).test(navigator.userAgent);
+    isChromeAndroid = isChrome &&
+      ('startActivity' in navigator || !chrome.webstore),
+    isAndroid = isAndroidStock || isChromeAndroid || isAndroidFx ||
+      (!isAndroidStock && !isChromeAndroid && !isAndroidFx) && 
+        ua.indexOf('android') !== -1,
+    isIOS = !isAndroid &&
+      hasOwn.call(navigator, 'standalone') && !!window.getSearchEngine/*,
+    isBadTargetIOS = isIOS && /OS ([6-9]|\d{2})_\d/.test(navigator.userAgent)*/,
 
-  /*console.log(JSON.stringify({
+    // 32+
+    isChromeBelow31 = isChrome && 'vibrate' in navigator &&
+      'getContextAttributes' in document.createElement('canvas').getContext('2d'),
+    isBB10 = navigator.platform.toLowerCase() === 'blackberry' &&
+      (navigator.vendor || '').toLowerCase().indexOf('research in motion') !== -1;
+
+  console.log(JSON.stringify({
     isV8: isV8,
     isAndroid: isAndroid,
-    isChrome: isChrome
-  }));*/
+    isChrome: isChrome,
+    isChromeAndroid: isChromeAndroid,
+    isAndroidStock: isAndroidStock,
+    isFx: isFx,
+    isAndroidFx: isAndroidFx
+  }));
+
+  // chrome 18 window.Intent
+  // chrome 18 navigator.startActivity
+  // chrome 18 chrome.appNotifications
+  // chrome 18 chrome.setSuggestResult
+  // chrome 18 chrome.searchBox
+  // chrome 18 chrome.webstore
+  // chrome 18 chrome.app
+
+  // android stock chrome.searchBox
+  // android stock navigator.isApplicationInstalled
+  // android stock navigator.connection
+
+  // chrome android latest inc isV8
+
+  // chrome desktop chrome.app
+  // chrome desktop chrome.webstore
+  // inc isV8
 
   var FAKE_PREFIX = 'fake_',
     MOUSE_PREFIX = 'mouse',
@@ -3738,21 +3775,24 @@ requireModule('promise/polyfill').polyfill();
 
   // ###################
 
-  var needFastClick = (function() {
-    if (!isAndroid || !window.chrome) return true;
-
+  var mayNeedFastClick = (function() {
     var metaViewport = document.querySelector('meta[name="viewport"]');
 
     if (metaViewport) {
       // Chrome on Android with user-scalable="no" doesn't need FastClick (issue #89)
-      if (metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1) {
+      if ((isChromeAndroid || isBB10) &&
+          metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1) {
         return false;
       }
+
       // Chrome 32 and above with width=device-width or less don't need FastClick
-      if (chromeVersion > 31 && window.innerWidth <= window.screen.width) {
+      if (isChromeAndroid && isChromeBelow31 &&
+          window.innerWidth <= window.screen.width) {
         return false;
       }
     }
+
+    return true;
   }());
 
   // mouse type
@@ -4065,22 +4105,39 @@ requireModule('promise/polyfill').polyfill();
 
   // touch type
 
-  var findScrollParents = function(parent) {
-
-    var computed,
-      parents = [];
+  var findScrollParent = function(parent, computed) {
+    var parents = [{
+        computed: computed,
+        element: parent
+      }],
+      isScrollable;
 
     while (parent && (parent = parent.parentElement)) {
-      if (parent === document.body ||
-        parent === document.documentElement) break;
+      // if (parent === document.documentElement) break;
 
-      if ((parent.scrollHeight > parent.clientHeight) ||
-        (parent.scrollWidth > parent.clientWidth)) {
-        parents.push(parent);
+      computed = null;
+
+      if ((parent.scrollHeight > parent.clientHeight &&
+        (computed = getComputedStyle(parent)).overflowY !== 'hidden' &&
+        computed.overflowY !== 'visible') ||
+
+        (parent.scrollWidth > parent.clientWidth &&
+        (computed || (computed = getComputedStyle(parent)))
+        .overflowX !== 'hidden' && computed.overflowX !== 'visible') ||
+
+        (computed || (computed = getComputedStyle(parent))).position === 'fixed'
+      ) {
+        isScrollable = true;
       }
-    }
 
-    parents.push(window);
+      parents.push({
+        element: parent,
+        computed: computed,
+        scrollable: isScrollable
+      });
+
+      isScrollable = false;
+    }
 
     return parents;
   };
@@ -4098,7 +4155,10 @@ requireModule('promise/polyfill').polyfill();
               id = touch.identifier,
               lastEnterTarget = touchDevice.lastEnterTarget;
 
-            if (touchesMap[id]) return;
+            if (touchesMap[id]) {
+              e.preventDefault();
+              return;
+            }
 
             var target = touch.target,
               startTouch = {},
@@ -4113,21 +4173,26 @@ requireModule('promise/polyfill').polyfill();
             pointer.buttons = 1;
 
             var overDict = getMouseDict(touch, {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                buttons: 0,
-                relatedTarget: null // prev target goes here
-              }),
-              downDict = getMouseDict(touch, {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                buttons: 1,
-                relatedTarget: null
-              }),
-              isPrimary = pointer.isPrimary,
-              needEnter = (!lastEnterTarget || !lastEnterTarget !== target);
+              bubbles: true,
+              cancelable: true,
+              button: 0,
+              buttons: 0,
+              relatedTarget: null // prev target goes here
+            }),
+            downDict = getMouseDict(touch, {
+              bubbles: true,
+              cancelable: true,
+              button: 0,
+              buttons: 1,
+              relatedTarget: null
+            }),
+            isPrimary = pointer.isPrimary,
+            needFastClick = isPrimary && mayNeedFastClick,
+            needEnter = (!lastEnterTarget || !lastEnterTarget !== target),
+            computed = isPrimary && getComputedStyle(target),
+            parents;
+
+            // console.log('isPrimary:', isPrimary, 'needFastClick:', mayNeedFastClick);
 
             var touchData = touchesMap[id] = {
               pointer: pointer,
@@ -4136,34 +4201,95 @@ requireModule('promise/polyfill').polyfill();
               startTouch: startTouch,
               startTarget: target,
               prevTarget: target,
-              style: isPrimary && needFastClick && window.getComputedStyle(target)
+              computed: isPrimary && computed
             };
 
-            /*if (isPrimary && !(isAndroid && isChrome)) {
-              var scrollParents = findScrollParents(target),
-
-            }*/
-
             if (isPrimary) {
+              parents = findScrollParent(target, computed);
+
+              var touchAction = true,
+                determinedAction,
+                scrollables = [];
+
+              parents.forEach(function(parent) {
+                var element = parent.element;
+
+                if (parent.scrollable) {
+                  scrollables.push(parent);
+                }
+
+                if (determinedAction) return;
+
+                var computed = parent.computed || getComputedStyle(element),
+                  action = computed.touchAction || computed.content
+                    .split(/\s*;\s*/).reduce(function(result, rule) {
+                      if (result) {
+                        return result;
+                      }
+
+                      rule = rule.split(/\s*:\s*/);
+
+                      if (rule[0] === 'touch-action') {
+                        return rule[1];
+                      }
+
+                      return result;
+                    }, '');
+
+                if (action === 'none') {
+                  touchAction = false;
+                  determinedAction = true;
+                }
+
+                if (parent.scrollable) {
+                  determinedAction = true;
+                }
+              });
+
+              if (touchAction) {
+                scrollables.forEach(function(parent) {
+                  parent.scrollLeft = parent.element.scrollLeft;
+                  parent.scrollTop = parent.element.scrollTop;
+                });
+
+                scrollables.push({
+                  isWin: true,
+                  scrollLeft: window.pageXOffset,
+                  scrollTop: window.pageYOffset,
+                  element: window
+                });
+
+                touchData.scrollables = scrollables;
+              }
+  
+              // !touchAction === noScroll
+              touchData.touchAction = touchAction;
+
+              if (touchDevice.currentPrimaryTouch) {
+                touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
+              }
+
               touchDevice.currentPrimaryTouch = touchData;
             }
 
-            // this block should be uncommented if leave event should be fired
-            // not from pointerup/pointercancel event, but from pointerdown
+            {
+              // this block should be uncommented if leave event should be fired
+              // not from pointerup/pointercancel event, but from pointerdown
 
-            /*if (isPrimary && lastEnterTarget &&
-                !lastEnterTarget.contains(target)) {
-              pointer.dispatchEvent(
-                lastEnterTarget,
-                // inherit from mouse dict
-                'leave', getMouseDict(touch, {
-                  bubbles: false,
-                  cancelable: false,
-                  button: 0,
-                  buttons: 0,
-                  relatedTarget: target
-                }));
-            }*/
+              /*if (isPrimary && lastEnterTarget &&
+                  !lastEnterTarget.contains(target)) {
+                pointer.dispatchEvent(
+                  lastEnterTarget,
+                  // inherit from mouse dict
+                  'leave', getMouseDict(touch, {
+                    bubbles: false,
+                    cancelable: false,
+                    button: 0,
+                    buttons: 0,
+                    relatedTarget: target
+                  }));
+              }*/
+            }
 
             isPrimary && dispatchMouseEvent(
               'move',
@@ -4178,13 +4304,7 @@ requireModule('promise/polyfill').polyfill();
             );
 
             // pointerover
-            pointer.dispatchEvent(
-              target,
-              // inherit from mouse dict
-              'over', overDict/*, {
-                bubbles: true,
-                cancelable: true
-              }*/);
+            pointer.dispatchEvent(target, 'over', overDict);
 
             // compact mouseover
             isPrimary && dispatchMouseEvent('over', target, overDict);
@@ -4206,23 +4326,30 @@ requireModule('promise/polyfill').polyfill();
             }
 
             // pointerdown
-            var canceled = !pointer.dispatchEvent(
-              target,
-              // inherit from mouse dict
-              'down', downDict/*, {
-                bubbles: true,
-                cancelable: true
-              }*/);
+            var canceled = !pointer.dispatchEvent(target, 'down', downDict);
 
             if (canceled) {
+              needFastClick = false;
               e.preventDefault();
               touchDevice.mouseEventsPrevented = true;
+              // console.log('set no fast click by canceled pointerdown');
             }
 
             // compact mousedown
-            if (isPrimary && /*!touchDevice.mouseEventsPrevented*/ canceled) {
+            if (isPrimary && /*!touchDevice.mouseEventsPrevented*/ !canceled) {
               dispatchMouseEvent('down', target, downDict);
             }
+
+            if (isIOS) {
+              var selection = window.getSelection();
+
+              if (selection.rangeCount && !selection.isCollapsed) {
+                needFastClick = false;
+                // console.log('set no fast click by ios selection');
+              }
+            }
+
+            touchData.needFastClick = needFastClick;
           };
 
           if (touches.length) {
@@ -4240,14 +4367,21 @@ requireModule('promise/polyfill').polyfill();
 
             if (!touchData) return;
 
+            // console.log(document.body.scrollTop, document.documentElement.scrollTop, pageYOffset);
+
+            var movedOut = touchData.movedOut;
+
+            if (movedOut && isIOS && !touchData.scrollClickFixed) {
+              fixIOSScroll(touchData);
+            }
+
+            if (touchData.ignoreTouch) return;
+
             var lastEnterTarget = touchDevice.lastEnterTarget,
               pointer = touchData.pointer,
               isPrimary = pointer.isPrimary,
-              prevTarget = touchData.prevTarget;
-
-            if (touchData.ignoreTouch) {
-              return;
-            }
+              prevTarget = touchData.prevTarget,
+              touchAction = touchData.touchAction;
 
             var getTarget = touchData.getTarget ||
               (touchData.getTarget = debunce(function(touch) {
@@ -4257,14 +4391,22 @@ requireModule('promise/polyfill').polyfill();
                 return target;
               }, 10, false));
 
-            var target = getTarget(touch) || prevTarget;
+            var target = getTarget(touch) || prevTarget,
+              isFirstMove;
 
-            if (isPrimary) {
-              touchData.moved = true;
+            if (isPrimary && !touchData.moved) {
+              touchData.moved = isFirstMove = true;
             }
 
             if (target !== prevTarget) {
-              handleTouchMove(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchMove(
+                touch,
+                touchData,
+                pointer,
+                isPrimary,
+                target,
+                prevTarget
+              );
             }
 
             var moveDict = getMouseDict(touch, {
@@ -4275,37 +4417,59 @@ requireModule('promise/polyfill').polyfill();
               relatedTarget: null
             });
 
-            var canceled = !pointer.dispatchEvent(target, 'move', moveDict);
+            var canceled = !pointer.dispatchEvent(target, 'move', moveDict)
+              && isFirstMove;
 
-            if (isPrimary && !touchDevice.mouseEventsPrevented) {
-              canceled ||
-                (canceled = !dispatchMouseEvent('move', target, moveDict));
+            if (!isPrimary) return;
+
+            var startTouch = startTouch = touchData.startTouch;
+
+            if (!movedOut && (isAndroid && isFirstMove) ||
+                abs(startTouch.clientX - touch.clientX) >= 10 ||
+                abs(startTouch.clientY - touch.clientY) >= 10) {
+              movedOut = touchData.movedOut = true;
+              touchData.needFastClick = false;
+              // console.log('set no fast click by move');
             }
 
-            if (canceled) {
+            if (!touchDevice.mouseEventsPrevented) {
+              dispatchMouseEvent('move', target, moveDict);
+            }
+
+            // prevent scroll if move canceled
+            // or if no touchAction for this element and this is Cr for Android
+            if (canceled || touchDevice.mouseEventsPrevented ||
+              (!touchAction && (!isIOS || (isIOS && movedOut)))
+            ) {
               e.preventDefault();
+              return;
             }
 
-            if (!touchDevice.mouseEventsPrevented && !canceled) {
+            if (touchAction && !touchDevice.mouseEventsPrevented && !canceled) {
               // cannot detect opera via isChrome but Ya and Cr is
               var needIgnore = isAndroid && !isChrome;
 
-              if (!isAndroid) {
-                var startTouch = touchData.startTouch,
-                  xMin = startTouch.clientX - 10,
-                  xMax = startTouch.clientX + 10,
-                  yMin = startTouch.clientY - 10,
-                  yMax = startTouch.clientY + 10;
-
-                if (xMin > touch.clientX || xMax < touch.clientX ||
-                  yMin > touch.clientY || yMax < touch.clientY) {
-                  needIgnore = true;
-                }
+              if (!isAndroid && movedOut) {
+                needIgnore = true;
               }
 
               if (needIgnore) {
                 touchData.ignoreTouch = true;
-                handleTouchCancel(touch, touchData, pointer, isPrimary, target, prevTarget);
+                touchData.needFastClick = false;
+
+                handleTouchCancel(
+                  touch,
+                  touchData,
+                  pointer,
+                  isPrimary,
+                  target,
+                  prevTarget
+                );
+              }
+
+              if (mayNeedFastClick) {
+                unbindScrollFix(touchDevice.prevPrimaryTouch);
+                bindScrollFix(touchData);
               }
             }
           };
@@ -4330,14 +4494,22 @@ requireModule('promise/polyfill').polyfill();
               isPrimary = pointer.isPrimary,
               prevTarget = touchData.prevTarget,
               getTarget = touchData.getTarget,
-              target = getTarget && getTarget(touch) || prevTarget;
+              target = getTarget && getTarget(touch) || prevTarget,
+              needFastClick = touchData.needFastClick;
 
             if (isPrimary) {
               touchData.ended = true;
             }
 
             if (!touchData.ignoreTouch && prevTarget !== target) {
-              handleTouchMove(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchMove(
+                touch,
+                touchData,
+                pointer,
+                isPrimary,
+                target, 
+                prevTarget
+              );
             }
 
             touchesMap[id] = null;
@@ -4345,7 +4517,8 @@ requireModule('promise/polyfill').polyfill();
             touchDevice.mouseEventsPrevented = false;
 
             if (!touchData.ignoreTouch) {
-              handleTouchEnd(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchEnd(touch, touchData, pointer,
+                isPrimary, target, prevTarget);
             }
 
             pointer.destroy();
@@ -4355,28 +4528,17 @@ requireModule('promise/polyfill').polyfill();
               touchDevice.currentPrimaryTouch = null;
             }
 
-            /*var style = touchData.style
+            /*console.log(touchData.needFastClick + '', touchData.ignoreTouch + '', touchData.clicked + '',
+              target + '', touchData.startTouch.target + '');*/
 
-            if (!isPrimary || !style) return;
-
-            if (style.msTouchAction === 'none' ||
-                style.touchAction === 'none' ||
-                touchData.startTarget
-                  .getAttribute('touch-action') === 'none') return;
+            if (!needFastClick || touchData.ignoreTouch ||
+                touchData.clicked || target !== touchData.startTouch.target) {
+              return;
+            }
 
             e.preventDefault();
-
-            var clickEvent = getMouseDict(touch, {
-              bubbles: true,
-              cancelable: true,
-              button: 0,
-              buttons: 1,
-              relatedTarget: null
-            });
-
-            clickEvent = new MouseEvent('click', clickEvent);
-            clickEvent._fastClick = true;
-            target.dispatchEvent(clickEvent);*/
+            handleFastClick(touch, touchData, pointer,
+              isPrimary, target, prevTarget);
           };
 
           if (touches.length) {
@@ -4403,6 +4565,7 @@ requireModule('promise/polyfill').polyfill();
 
             if (isPrimary) {
               touchData.ended = true;
+              touchData.canceled = true;
             }
 
             touchesMap[id] = null;
@@ -4410,7 +4573,8 @@ requireModule('promise/polyfill').polyfill();
             touchDevice.mouseEventsPrevented = false;
 
             if (!touchData.ignoreTouch) {
-              handleTouchCancel(touch, touchData, pointer, isPrimary, target, prevTarget);
+              handleTouchCancel(touch, touchData, pointer,
+                isPrimary, target, prevTarget);
             }
 
             pointer.destroy();
@@ -4428,6 +4592,9 @@ requireModule('promise/polyfill').polyfill();
           }
         }
       };
+
+    var TOUCH_SCROLL_CACHE = 'touch_scroll_cache',
+      SCROLL_FIX_DELAY = 500;
 
     var dispatchMouseEvent = function(event, target, dict) {
       if (!dict.view) {
@@ -4593,25 +4760,183 @@ requireModule('promise/polyfill').polyfill();
       // this pointer call is under question
       pointer.dispatchEvent(target, 'leave', leaveDict);
       isPrimary && dispatchMouseEvent('leave', target, leaveDict);
+    },
+    handleFastClick = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
+      var computed = touchData.computed;
+
+      var clickEvent = getMouseDict(touch, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        relatedTarget: null
+      });
+
+      if (needFocus(target)) {
+        target.focus();
+      }
+
+      clickEvent = new MouseEvent('click', clickEvent);
+      clickEvent.isFastClick = true;
+      target.dispatchEvent(clickEvent);
+
+      touchData.fastClicked = true;
+      // console.log('click dispatched');
+    },
+    fixIOSScroll = function(touchData) {
+      var scrolledParent;
+
+      if (touchData.scrollables.some(function(parent) {
+        var element = parent.element;
+
+        if (parent.isWin) {
+          var scrollLeft = window.pageXOffset,
+            scrollTop = window.pageYOffset;
+        } else {
+          scrollLeft = element.scrollLeft;
+          scrollTop = element.scrollTop;
+        }
+
+        if (parent.scrollLeft !== scrollLeft ||
+            parent.scrollTop !== scrollTop) {
+          scrolledParent = parent;
+          return true;
+        }
+      })) {
+        touchData.scrollClickFixed = true;
+
+        var scrolledForStyle = scrolledParent.isWin ?
+          document.documentElement : scrolledParent.element,
+          scrolledForEvent = scrolledParent.element,
+          prevCSSPointerEvents = scrolledForStyle.style.pointerEvents;
+
+        scrolledForStyle.style.pointerEvents = 'none !important';
+
+        scrolledForEvent.addEventListener('scroll', function scrollHandler() {
+          scrolledForEvent.removeEventListener('scroll', scrollHandler);
+          scrolledForStyle.style.pointerEvents = prevCSSPointerEvents;
+        });
+
+        // prevent pointer events until scrolled
+      }
+    },
+    bindScrollFix = function(touchData) {
+      if (isIOS || !touchData || touchData.scrollClickFixed) return;
+
+      var scrollables = touchData.scrollables;
+
+      touchData.scrollClickFixed = true;
+
+      scrollables.forEach(function(parent) {
+        var element = parent.element,
+          scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE),
+          scrollTimer,
+
+          firstScroll = true,
+          scrollStyleElem,
+          prevCSSPointerEvents;
+
+        if (scrollCache.scrollHandler) return;
+
+        // if (!element) return;
+
+        var scrollHandler = function() {
+          if (firstScroll) {
+            firstScroll = false;
+
+            // console.log('first scroll', element);
+
+            scrollStyleElem = parent.isWin ?
+              document.documentElement : parent.element;
+            prevCSSPointerEvents = scrollStyleElem.style.pointerEvents;
+
+            if (prevCSSPointerEvents === 'none') alert(13);
+
+            scrollStyleElem.style.pointerEvents = 'none';
+            scrollCache.styleElem = scrollStyleElem;
+            scrollCache.prevCSSPointerEvents = prevCSSPointerEvents;
+            // console.log('bind:');
+          }
+
+          if (scrollTimer) clearTimeout(scrollTimer);
+
+          scrollTimer = setTimeout(function() {
+            scrollTimer = null;
+            unbindScrollFix(touchData);
+          }, SCROLL_FIX_DELAY);
+        };
+
+        scrollCache.scrollHandler = scrollHandler;
+        element.addEventListener('scroll', scrollHandler);
+      });
+    },
+    unbindScrollFix = function(touchData) {
+      if (isIOS || !touchData || !touchData.scrollClickFixed) return;
+
+      var scrollables = touchData.scrollables;
+
+      touchData.scrollClickFixed = false;
+
+      // console.log('unbind:');
+
+      scrollables.forEach(function(parent) {
+        var element = parent.element,
+          scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE);
+
+        if (scrollCache.styleElem) {
+          scrollCache.styleElem.style.pointerEvents = scrollCache.prevCSSPointerEvents;
+          // console.log('set prev events:', scrollCache.styleElem.style.pointerEvents);
+
+          scrollCache.styleElem = null;
+          scrollCache.prevCSSPointerEvents = '';
+        }
+
+        if (scrollCache.scrollHandler) {
+          element.removeEventListener('scroll', scrollCache.scrollHandler);
+          scrollCache.scrollHandler = null;
+        }
+      });
+    },
+    needFocus = function(target) {
+      var disabled = target.disabled || target.readOnly;
+
+      switch (target.nodeName.toLowerCase()) {
+        case 'textarea':
+          return !disabled && (!isAndroidFx);
+        case 'select':
+          return !disabled && (isAndroidFx || !isAndroid);
+        case 'input': {
+          if (disabled) return false;
+
+          switch (target.type) {
+            case 'button':
+            case 'checkbox':
+            case 'file':
+            case 'image':
+            case 'radio':
+            case 'submit':
+              return isAndroidFx;
+          }
+        }
+      }
     };
+
 
     events.syncEvent('click', function(synced) {
       return {
         addEventListener: function(type, callback, capture) {
+          triggerDeviceListeners(this, type/*, capture*/, 'touch');
+
           events.addEvent(this, type, {
             handler: function(e) {
-              var touchData = touchDevice.currentPrimaryTouch;
+              var touchData = touchDevice.currentPrimaryTouch,
+                sameTouch = touchData && (e.timeStamp - touchData.time) < 800;
 
-              if (touchData && touchData.ignoreTouch) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
+              // console.log(sameTouch, touchData, e.isFastClick + '');
+              // console.log(sameTouch, touchData);
 
-                return;
-              }
-
-              if (!e._fastClick && touchData) {
-                if (!touchData.ended) {
+              if (!e.isFastClick && touchData) {
+                if (sameTouch && !touchData.ended) {
                   touchData.clicked = true;
                 } else {
                   touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
@@ -4619,7 +4944,15 @@ requireModule('promise/polyfill').polyfill();
                 }
               }
 
-              callback.call(this, e);
+              console.log('prevented:', sameTouch && (touchData.ignoreTouch || touchData.fastClicked));
+
+              if (sameTouch && (touchData.ignoreTouch || touchData.fastClicked)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+              } else {
+                callback.call(this, e);
+              }
             },
             callback: callback,
             capture: capture,
@@ -4627,6 +4960,8 @@ requireModule('promise/polyfill').polyfill();
           });
         },
         removeEventListener: function(type, callback, capture) {
+          muteDeviceListeners(this, type/*, capture*/, 'touch');
+
           events.removeEvent(this, type, {
             callback: callback,
             capture: capture,
@@ -5730,12 +6065,12 @@ requireModule('promise/polyfill').polyfill();
       transformOriginZ: transformOrigin + 'Z',
       transformStyle: transformStyle
     },
-    REQUEST_ANIMATION_FRAME = 'requestAnimationFrame',
-    CANCEL_REQUEST_ANIMATION_FRAME = 'cancelAnimationFrame',
+    REQUEST_ANIMATION_FRAME = 'RequestAnimationFrame',
+    CANCEL_REQUEST_ANIMATION_FRAME = 'CancelAnimationFrame',
     TRANSITION_DATA_KEY = 'transition_data';
 
-  if (!window[REQUEST_ANIMATION_FRAME]) {
-    window[REQUEST_ANIMATION_FRAME] = ['webkit', 'moz', 'o']
+  if (!window.requestAnimationFrame) {
+    window.requestAnimationFrame = ['webkit', 'moz', 'o']
       .map(function(vendor) {
         return window[vendor + REQUEST_ANIMATION_FRAME]
       }).filter(function(a) {
@@ -5746,7 +6081,7 @@ requireModule('promise/polyfill').polyfill();
         }, 15);
       };
 
-    window[CANCEL_REQUEST_ANIMATION_FRAME] = ['webkit', 'moz', 'o']
+    window.cancelAnimationFrame = ['webkit', 'moz', 'o']
       .map(function(vendor) {
         return window[vendor + CANCEL_REQUEST_ANIMATION_FRAME]
       }).filter(function(a) {

@@ -145,12 +145,12 @@
       transformOriginZ: transformOrigin + 'Z',
       transformStyle: transformStyle
     },
-    REQUEST_ANIMATION_FRAME = 'requestAnimationFrame',
-    CANCEL_REQUEST_ANIMATION_FRAME = 'cancelAnimationFrame',
+    REQUEST_ANIMATION_FRAME = 'RequestAnimationFrame',
+    CANCEL_REQUEST_ANIMATION_FRAME = 'CancelAnimationFrame',
     TRANSITION_DATA_KEY = 'transition_data';
 
-  if (!window[REQUEST_ANIMATION_FRAME]) {
-    window[REQUEST_ANIMATION_FRAME] = ['webkit', 'moz', 'o']
+  if (!window.requestAnimationFrame) {
+    window.requestAnimationFrame = ['webkit', 'moz', 'o']
       .map(function(vendor) {
         return window[vendor + REQUEST_ANIMATION_FRAME]
       }).filter(function(a) {
@@ -161,7 +161,7 @@
         }, 15);
       };
 
-    window[CANCEL_REQUEST_ANIMATION_FRAME] = ['webkit', 'moz', 'o']
+    window.cancelAnimationFrame = ['webkit', 'moz', 'o']
       .map(function(vendor) {
         return window[vendor + CANCEL_REQUEST_ANIMATION_FRAME]
       }).filter(function(a) {

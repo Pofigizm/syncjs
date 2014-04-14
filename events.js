@@ -364,6 +364,8 @@
       if (inter) {
         var localDesc = desc || Object.getOwnPropertyDescriptor(inter, method);
 
+        // console.log(inter, method, value);
+
         Object.defineProperty(inter, method, {
           value: value,
           writable: localDesc.writable,
@@ -853,7 +855,7 @@
   // native enter/leave are broken in Chrome ...
   // ... and we cannot detect that
   bindEnterLeave: if (!('onmouseenter' in document.createElement('div')) || hasTouch) {
-    // break bindEnterLeave;
+    break bindEnterLeave;
 
     Sync.each({
       mouseenter: 'mouseover',

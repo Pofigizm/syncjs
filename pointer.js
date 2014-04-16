@@ -627,8 +627,6 @@
       mouseNatives = {},
       mouseBindings = {
         down: function(e, type, event) {
-          if (e.isFastClick) return;
-
           var pointerFire = !mousePointer.buttons;
 
           if ('buttons' in e) {
@@ -664,7 +662,6 @@
           }
         },
         up: function(e, type, event) {
-          if (e.isFastClick) return;
           if (!mousePointer.buttons) return;
 
           if ('buttons' in e) {
@@ -697,9 +694,7 @@
 
           mouseDevice.mouseEventsPrevented = false;
         },
-        cancel: function(e, type, event) {
-          if (e.isFastClick) return;
-
+        cancel: function(e, type, event, isCompatibility) {
           var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
             type: 'MouseEvent',
             options: e
@@ -710,6 +705,8 @@
             return;
           }
 
+          if (isCompatibility) return;
+
           mousePointer.dispatchEvent(e.target, type, e, {
             bubbles: true,
             cancelable: false
@@ -719,8 +716,6 @@
           mouseDevice.mouseEventsPrevented = false;
         },
         move: function(e, type, event) {
-          if (e.isFastClick) return;
-
           var canceled = !mousePointer
             .dispatchEvent(e.target, type, e, {
               bubbles: true,
@@ -742,8 +737,6 @@
 
     ['over', 'out', 'enter', 'leave'].forEach(function(type) {
       mouseBindings[type] = function(e, type, event) {
-        if (e.isFastClick) return;
-
         var option = type === 'over' || type === 'out';
 
         var canceled = !mousePointer.dispatchEvent(
@@ -752,10 +745,10 @@
             cancelable: option
           });
 
-        canceled || (canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
+        events.dispatchEvent(e.target, FAKE_PREFIX + event, {
           type: 'MouseEvent',
           options: e
-        }));
+        });
 
         if (canceled) {
           e.preventDefault();
@@ -779,9 +772,10 @@
           e.stopImmediatePropagation();
 
           var isCompatibility = checkForCompatibility(this, e, event, type);
+          // console.log('mouse event:', event, type, isCompatibility);
 
-          if (!isCompatibility) {
-            callback.call(this, e, event, type);
+          if (type === 'contextmenu' || (!isCompatibility && !e.isFastClick)) {
+            callback.call(this, e, event, type, isCompatibility);
           }
         },
         callback: callback,
@@ -816,6 +810,19 @@
         prevTouchData = touchDevice.prevPrimaryTouch,
         touchDevice;
 
+      /*if (touchData) {
+        console.log(touchData, type === 'contextmenu',
+          e.timeStamp - touchData.startTime >= 450, !touchData.ended,
+          !touchData.clicked);
+      }*/
+
+      if (touchData && type === 'contextmenu' &&
+        e.timeStamp - touchData.startTime >= 450 && !touchData.ended &&
+        !touchData.clicked) {
+        return true;
+      }
+
+      // console.log(e, 'compatibility check');
       if (touchData && touchData.moved && isAndroid) return;
 
       // console.log('prev:', e.target, prevTouchData && prevTouchData.startTouch.target);
@@ -860,14 +867,15 @@
 
             !hasMouseListeners && (hasMouseListeners = true);
 
+            // console.log('sync add:', FAKE_PREFIX + full);
+
             events.addEvent(this, FAKE_PREFIX + full, {
               handler: function(e) {
                 e = shadowEventType(e, type);
                 callback.call(this, e);
               },
               callback: callback,
-              capture: capture,
-              method: synced.addEventListener
+              capture: capture
             });
           },
           removeEventListener: function(type, callback, capture) {
@@ -881,8 +889,7 @@
 
             events.addEvent(this, FAKE_PREFIX + full, {
               callback: callback,
-              capture: capture,
-              method: synced.removeEventListener
+              capture: capture
             });
           }
         }
@@ -1244,28 +1251,11 @@
 
       var handleTouch = function(touch) {
         var id = touch.identifier,
-          lastEnterTarget = touchDevice.lastEnterTarget,
-          outdatedTouch = touchesMap[id];
+          lastEnterTarget = touchDevice.lastEnterTarget;
 
         // cannot handle more than one touch with same id
-        if (outdatedTouch) {
-          outdatedTouch.revoked = true;
-
-          /*touchesMap[id] = null;
-          touchDevice.lastEnterTarget = null;
-          
-          if (outdatedTouch.pointer.isPrimary) {
-            touchDevice.mouseEventsPrevented = false;
-          }
-
-          if (outdatedTouch.pointer.isPrimary && touchData.clicked) {
-            updateDevicePrimary();
-          }
-
-          outdatedTouch.pointer.destroy();*/
-
-          cleanUpTouch(outdatedTouch);
-          console.log('prevent touchstart by not id');
+        if (touchesMap[id]) {
+          return;
         }
 
         var target = touch.target,
@@ -1645,9 +1635,9 @@
         slopSize = flags.TOUCHMOVE_SLOP_SIZE,
         movedOut = touchData.movedOut;
 
-      if (!movedOut && (isAndroid && isFirstMove) ||
+      if (!movedOut && ((isAndroid && isFirstMove) ||
           abs(startTouch.clientX - touch.clientX) >= slopSize ||
-          abs(startTouch.clientY - touch.clientY) >= slopSize) {
+          abs(startTouch.clientY - touch.clientY) >= slopSize)) {
         movedOut = touchData.movedOut = true;
         touchData.needFastClick = false;
         console.log('canceld fast click by check for move');
@@ -1799,6 +1789,7 @@
       fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
     },
     handleTouchEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
+      console.log('touchEnd:', target, prevTarget);
       /*var fireMouseEvents = touchData.fireMouseEvents;
 
       var pastClick = function() {
@@ -1840,6 +1831,10 @@
       pointer.dispatchEvent(target, 'up', upDict);
       fireMouseEvents && dispatchMouseEvent('up', target, upDict);*/
 
+      // there is possible case then click is fired before touchend
+      // in that situations for best synced events sequence probably need to defer click
+      // (i.e. prevent real and sent synthetic in touchend) or
+      // handle touchend in click event
       if (touchData.clicked) return;
 
       var movedOut = touchData.moved ? touchData.movedOut :
@@ -1864,11 +1859,6 @@
 
       touchData.intentToClick = intentToClick;
 
-      if (!intentToClick) {
-        console.log('prevent touchend by !intentToClick');
-        e.preventDefault();
-      }
-
       var isNeedFastClick = intentToClick && !touchData.clicked &&
         needFastClick && !noElementFastClick(target);
 
@@ -1891,15 +1881,13 @@
 
         handlePastEnd(touch, touchData, pointer,
           isPrimary, target, prevTarget, e);
-      } else /*if (touchData.cliked) {
-        // there is possible case then click is fired before touchend
-        // in that situations for best synced events sequence probably need to defer click
-        // (i.e. prevent real and sent synthetic in touchend) or
-        // handle touchend in click event
-
-        pastClick();
-      } else*/ if (intentToClick) {
+      } else if (intentToClick) {
         touchData.needPastClick = true;
+      } else {
+        console.log('prevent touchend by !intentToClick');
+        e.preventDefault();
+        handlePastEnd(touch, touchData, pointer,
+          isPrimary, target, prevTarget, e);
       }
 
       console.log('touches:', e.changedTouches.length, e.targetTouches.length, e.touches.length);
@@ -2198,6 +2186,48 @@
       }
       
       touchDevice.currentPrimaryTouch = touchData || null;;
+    },
+    BBContextMenuFix = function(e) {
+      var touches = e.changedTouches;
+
+      console.log('FIRED ONCE!!!');
+
+      var handleTouch = function(touch) {
+        var id = touch.identifier,
+          outdatedTouch = touchesMap[id];
+
+        if (!outdatedTouch) return;
+
+        outdatedTouch.revoked = true;
+
+        console.log('revoke outdated touch');
+
+        handleTouchCancel(touch, outdatedTouch, outdatedTouch.pointer,
+          outdatedTouch.pointer.isPrimary, outdatedTouch.startTarget,
+          outdatedTouch.prevTarget, {
+            bubbles: true,
+            cancelable: false,
+            detail: 0,
+            view: e.view,
+            targetTouches: document.createTouchList(),
+            toucehs: document.createTouchList()
+          });
+
+        cleanUpTouch(outdatedTouch);
+      };
+
+      if (touches.length) {
+        slice.call(touches).forEach(handleTouch);
+      } else {
+        handleTouch(touches[0]);
+      }
+
+      events.removeEvent(document, e.type, {
+        callback: BBContextMenuFix,
+        capture: true,
+        method: touchNatives[e.type].removeEventListener,
+        namespace: NS_TOUCH_POINTER
+      });
     };
 
     events.syncEvent('click', function(synced) {
@@ -2264,16 +2294,20 @@
         addEventListener: function(type, callback, capture) {
           events.addEvent(this, type, {
             handler: function(e) {
-              /*var touchData = touchDevice.currentPrimaryTouch;
+              var touchData = touchDevice.currentPrimaryTouch;
 
-              if (touchData) {
-                if (!touchData.ended) {
-                  touchData.clicked = true;
-                } else {
-                  touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-                  touchDevice.currentPrimaryTouch = null;
-                }
-              }*/
+              console.log('touch contextmenu');
+
+              if (isBB10 && touchData) {
+                var touchStart = TOUCH_PREFIX + 'start';
+
+                events.addEvent(document, touchStart, {
+                  handler: BBContextMenuFix,
+                  capture: true,
+                  method: touchNatives[touchStart].addEventListener,
+                  namespace: NS_TOUCH_POINTER
+                });
+              }
 
               callback.call(this, e);
             },

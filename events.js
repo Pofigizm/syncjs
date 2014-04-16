@@ -854,8 +854,9 @@
   // or shadow them on devices with touch because
   // native enter/leave are broken in Chrome ...
   // ... and we cannot detect that
-  bindEnterLeave: if (!('onmouseenter' in document.createElement('div')) || hasTouch) {
-    break bindEnterLeave;
+  bindEnterLeave: if (!('onmouseenter' in document.createElement('div'))/* || hasTouch*/) {
+    // hasTouch should be changed to isChromeAndroid
+    // break bindEnterLeave;
 
     Sync.each({
       mouseenter: 'mouseover',
@@ -879,6 +880,8 @@
                     type: 'MouseEvent',
                     options: e
                   });
+
+                  // console.log(originalEventKeyHook, originalHookKeyHook);
 
                   if (!relatedTarget || (target !== relatedTarget &&
                        !target.contains(relatedTarget))) {
@@ -916,6 +919,7 @@
 
         return {
           addEventListener: function(event, callback, capture) {
+            // console.log('add mouseout/over', event);
             events.addEvent(this, originalEventKeyHook, {
               handler: function(e) {
                 e = events.shadowEventProp(e, 'type', event);
@@ -942,9 +946,10 @@
       events.syncEvent(hook, function(synced) {
         return {
           addEventListener: function(hook, callback, capture) {
+            // console.log('add mouseleave/enter', hook);
             events.addEvent(this, originalHookKeyHook, {
               handler: function(e) {
-                e = events.shadowEventProp(e, 'type', event);
+                e = events.shadowEventProp(e, 'type', hook);
                 callback.call(this, e);
               },
               callback: callback,

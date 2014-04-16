@@ -997,9 +997,12 @@
               isFirstMove,
               fireMouseEvents;
 
-            !touchCanceled && (touchData.fireMouseEvents = touchCanceled);
+            if (touchData.touchMoveCanceled = touchCanceled) {
+              touchData.fireMouseEvents = false;
+              console.log('prevent mouse events: touchmove');
+            }
+
             fireMouseEvents = touchData.fireMouseEvents;
-            touchData.touchMoveCanceled = touchCanceled;
 
             if (isPrimary && !touchData.moved) {
               touchData.moved = isFirstMove = true;
@@ -1150,8 +1153,10 @@
                 e, document.createTouchList(touch)),
               fireTouchEvents;
 
-            !touchCanceled && (touchData.fireMouseEvents = touchCanceled);
-            touchData.touchEndCanceled = touchCanceled;
+            if (touchData.touchEndCanceled = touchCanceled) {
+              touchData.fireMouseEvents = false;
+              console.log('prevent mouse events: touchend');
+            }
 /*
             touchesMap[id] = null;
             touchDevice.lastEnterTarget = null;
@@ -1855,8 +1860,19 @@
       // because touchmove is tracked by 'ignoreTouch' flag
 
       var intentToClick = !touchData.touchEndCanceled &&
+        // need to properly deliver multitouch property
+        (!e.touches.length && !touchData.multitouch) &&
         !touchData.isContextmenuShown && !timedOut && !touchData.ignoreTouch &&
         target === touchData.startTarget;
+
+      console.log(
+        !touchData.touchEndCanceled,
+        !touchData.multitouch,
+        !touchData.isContextmenuShown,
+        !timedOut,
+        !touchData.ignoreTouch,
+        target === touchData.startTarget
+      );
 
       touchData.intentToClick = intentToClick;
 
@@ -1891,7 +1907,13 @@
           isPrimary, target, prevTarget, e);
       }
 
-      console.log('touches:', e.changedTouches.length, e.targetTouches.length, e.touches.length);
+      if (isNeedFastClick || !intentToClick) {
+        console.log('unified cancelation goes here');
+      }
+
+      console.log('touches:', e.changedTouches.length, e.targetTouches.length, e.touches.length,
+        'isNeedFastClick:', isNeedFastClick, 'intentToClick:', intentToClick,
+        'multitouch:', touchData.multitouch);
     },
     handleFastClick = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
       var computed = touchData.computed;

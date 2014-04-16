@@ -1855,7 +1855,8 @@
       // because touchmove is tracked by 'ignoreTouch' flag
 
       var intentToClick = !touchData.touchEndCanceled &&
-        !timedOut && !touchData.ignoreTouch && target === touchData.startTarget;
+        !touchData.isContextmenuShown && !timedOut && !touchData.ignoreTouch &&
+        target === touchData.startTarget;
 
       touchData.intentToClick = intentToClick;
 
@@ -2297,6 +2298,10 @@
               var touchData = touchDevice.currentPrimaryTouch;
 
               console.log('touch contextmenu');
+
+              if (touchData) {
+                touchData.isContextmenuShown = true;
+              }
 
               if (isBB10 && touchData) {
                 var touchStart = TOUCH_PREFIX + 'start';

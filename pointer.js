@@ -200,6 +200,7 @@
 
   var devices = pointers.devices,
     flags = pointers.flags,
+    idCounter = 0,
     hasTouchListeners,
     hasMouseListeners,
     hasPointerListeners;
@@ -424,10 +425,17 @@
     return devices[type] || null;
   };
 
+  pointers.getNextId =  function() {
+    if (idCounter >= Number.MAX_VALUE) {
+      return (idCounter = 0);
+    }
+
+    return idCounter++;
+  };
+
   pointers.Device = function(type) {
     this.type = type;
     this.pointers = [];
-    this.counter = 0;
 
     // spec is not clear about canceling all device or pointer
     // it says:
@@ -450,13 +458,6 @@
 
       return pointer;
     },
-    getNextId: function() {
-      if (this.counter >= Number.MAX_VALUE) {
-        return (this.counter = 0);
-      }
-
-      return this.counter++;
-    },
     isPrimaryPointer: function(pointer) {
       return this.pointers[0] === pointer;
     },
@@ -478,7 +479,7 @@
 
   pointers.Pointer = function(device) {
     this.device = device;
-    this.id = device.getNextId();
+    this.id = pointers.getNextId();
     this.type = device.type;
     this.buttons = 0;
 
@@ -607,12 +608,10 @@
       }
     }
 
-    /*if (noScale) {
-      console.log('no scale');
-      // do not want fast click at scaled pages
-      // mobile first apps need it
+    // scaled viewport
+    if (!hasNoScale) {
       return false;
-    }*/
+    }
 
     return true;
   }());

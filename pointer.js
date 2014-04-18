@@ -817,17 +817,14 @@
     ['over', 'out', 'enter', 'leave'].forEach(function(type) {
       mouseBindings[type] = function(e, type, event, captured) {
         // is over or out event
-        var option = type === 'over' || type === 'out',
-          captureElement = mousePointer.captureElement;
+        var option = type === 'over' || type === 'out';
 
-        if (captured && option && e.target !== captureElement) {
-          return;
-        }
-
-        var target = captured ? captureElement : e.target;
+        var target = captured ? mousePointer.captureElement : e.target;
 
         // ### override relatedTarget here
-        events.shadowEventProp(e, 'relatedTarget', null);
+        if (captured) {
+          events.shadowEventProp(e, 'relatedTarget', null);
+        }
 
         var canceled = !mousePointer.dispatchEvent(target, type, e, {
           bubbles: option,
@@ -883,7 +880,14 @@
           e.stopImmediatePropagation();
 
           var isCompatibility = checkForCompatibility(this, e, event, type),
-            captured = node === document && mousePointer.captured;
+            captured = mousePointer.captured,
+            captureElement = mousePointer.captureElement;
+
+          if (captured && ((event === 'enter' || event === 'leave' ||
+              event === 'out' || event === 'over') && e.target !== captureElement)) {
+            return;
+          }
+
           // console.log('mouse event:', event, type, isCompatibility);
 
           if (type === 'contextmenu' || (!isCompatibility && !e.isFastClick)) {

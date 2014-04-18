@@ -437,6 +437,14 @@
     }
   };
 
+  events.setET = setET;
+  events.getET = getET;
+  events.setETCustom = setETCustom;
+  events.getETCustom = getETCustom;
+  events.setDOMET = setDOMET;
+  events.getDOMET = getDOMET;
+  events.setSeparateDOMET = setSeparateDOMET;
+
   window.EventTarget && (function() {
     var add = EventTarget.prototype.addEventListener,
       remove = EventTarget.prototype.removeEventListener,

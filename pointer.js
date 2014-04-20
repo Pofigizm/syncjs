@@ -371,7 +371,7 @@
     };
   };
 
-  events.setETCustom('Element', 'setPointerCapture', function(pointerId) {
+  events.setETCustom('Element', 'setPointerCapture', function(pointerId, options) {
     var pointer = pointersMap[pointerId],
       element = this;
 
@@ -385,12 +385,14 @@
 
     if (!pointer.buttons) return;
 
-    var device = pointers.getDevice(pointer.type);
+    var device = pointers.getDevice(pointer.type),
+      trackBoundaries = (options ? options.trackBoundaries : true) !== false;
 
     device.capturePointer(element, pointer);
 
     pointer.captured = true;
     pointer.captureElement = element;
+    pointer.captureTrackBoundaries = trackBoundaries;
 
     pointer.dispatchEvent(element, 'gotpointercapture', {
       // mouse dict
@@ -422,6 +424,7 @@
 
     pointer.captured = false;
     pointer.captureElement = null;
+    pointer.captureTrackBoundaries = void 0;
 
     pointer.dispatchEvent(element, 'lostpointercapture', {
       // mouse dict
@@ -483,6 +486,11 @@
         event[field] = hasOwn.call(options, field) ?
           options[field] : POINTER_DEFAULTS[field];
       }
+    });
+
+    event = events.shadowEventProp(event, {
+      'button': options.button,
+      'buttons': options.buttons
     });
 
     return event;
@@ -767,7 +775,7 @@
             e.preventDefault();
           }
 
-          implicitReleaseCapture();
+          implicitReleaseCapture(mousePointer);
           mouseDevice.mouseEventsPrevented = false;
         },
         cancel: function(e, type, event, captured, isCompatibility) {
@@ -790,7 +798,7 @@
             cancelable: false
           });
 
-          implicitReleaseCapture();
+          implicitReleaseCapture(mousePointer);
           mousePointer.buttons = 0;
           mouseDevice.mouseEventsPrevented = false;
         },
@@ -966,13 +974,6 @@
           return true;
         }
       }
-    },
-    implicitReleaseCapture = function() { console.log('implicit');
-      var captured = mousePointer.captured;
-
-      if (captured) {
-        mousePointer.captureElement.releasePointerCapture(mousePointer.id);
-      }
     };
 
     var syncMouseEvents = function(deviceNatives, full, event) {
@@ -1075,6 +1076,13 @@
     }
 
     return parents;
+  },
+  implicitReleaseCapture = function(pointer) { console.log('implicit release', pointer);
+    var captured = pointer.captured;
+
+    if (captured) {
+      pointer.captureElement.releasePointerCapture(pointer.id);
+    }
   };
 
   hasTouch && (function() {
@@ -1111,13 +1119,16 @@
 
             var lastEnterTarget = touchDevice.lastEnterTarget,
               pointer = touchData.pointer,
+              captured = pointer.captured,
+              needHitTest = !captured || pointer.captureTrackBoundaries,
               isPrimary = pointer.isPrimary,
               prevTarget = touchData.prevTarget,
               touchAction = touchData.touchAction,
               // getting new target for event not more than once per 10ms
               getTarget = touchData.getTarget ||
                 (touchData.getTarget = debunce(doHitTest, 10, false)),
-              target = getTarget(touch) || prevTarget,
+              target = needHitTest ?
+                getTarget(touch) || prevTarget : prevTarget,
               isFirstMove,
               fireMouseEvents;
 
@@ -1132,7 +1143,7 @@
               touchData.moved = isFirstMove = true;
             }
 
-            if (target !== prevTarget) {
+            if (needHitTest && target !== prevTarget) {
               handleTouchMove(
                 touch,
                 touchData,
@@ -1142,6 +1153,9 @@
                 prevTarget
               );
             }
+
+            // override potentially hit tested target to capture target, if exist
+            captured && (target = pointer.captureElement);
 
             var moveDict = getMouseDict(touch, {
               bubbles: true,
@@ -1157,18 +1171,6 @@
             if (!isPrimary) return;
 
             var movedOut = checkForMovedOut(touchData, touch, isFirstMove);
-
-            /*var startTouch = touchData.startTouch,
-              slopSize = flags.TOUCHMOVE_SLOP_SIZE;
-
-            if (!movedOut && (isAndroid && isFirstMove) ||
-                abs(startTouch.clientX - touch.clientX) >= slopSize ||
-                abs(startTouch.clientY - touch.clientY) >= slopSize) {
-              movedOut = touchData.movedOut = true;
-              touchData.needFastClick = false;
-
-              logger.log('Pointer moved out of slop');
-            }*/
 
             if (fireMouseEvents && !touchDevice.mouseEventsPrevented) {
               dispatchMouseEvent('move', target, moveDict);
@@ -1251,10 +1253,13 @@
 
             var lastEnterTarget = touchDevice.lastEnterTarget,
               pointer = touchData.pointer,
+              captured = pointer.captured,
+              needHitTest = !captured || pointer.captureTrackBoundaries,
               isPrimary = pointer.isPrimary,
               prevTarget = touchData.prevTarget,
               getTarget = touchData.getTarget,
-              target = getTarget && getTarget(touch) || prevTarget;
+              target = needHitTest ?
+                getTarget && getTarget(touch) || prevTarget : prevTarget;
 
             if (isPrimary) {
               touchData.timedOut =
@@ -1262,7 +1267,7 @@
               touchData.ended = true;
             }
 
-            if (!touchData.ignoreTouch && prevTarget !== target) {
+            if (needHitTest && !touchData.ignoreTouch && prevTarget !== target) {
               handleTouchMove(
                 touch,
                 touchData,
@@ -1273,6 +1278,9 @@
               );
             }
 
+            // override potentially hit tested target to capture target, if exist
+            captured && (target = pointer.captureElement);
+
             var touchCanceled = !dispatchTouchEvent('end', touchData.startTarget,
                 e, document.createTouchList(touch)),
               fireTouchEvents;
@@ -1281,13 +1289,6 @@
               touchData.fireMouseEvents = false;
               console.log('prevent mouse events: touchend');
             }
-/*
-            touchesMap[id] = null;
-            touchDevice.lastEnterTarget = null;
-            
-            if (isPrimary) {
-              touchDevice.mouseEventsPrevented = false;
-            }*/
 
             console.log('ignore end:', touchData.ignoreTouch);
 
@@ -1296,13 +1297,7 @@
                 isPrimary, target, prevTarget, e);
             }
 
-            cleanUpTouch(touchData);/*
-
-            pointer.destroy();
-
-            if (isPrimary && touchData.clicked) {
-              updateDevicePrimary();
-            }*/
+            cleanUpTouch(touchData);
 
             if (!e.targetTouches.length) {
               removeTouchBindings(touchData.startTarget, type);
@@ -1326,10 +1321,14 @@
 
             var lastEnterTarget = touchDevice.lastEnterTarget,
               pointer = touchData.pointer,
+              captured = pointer.captured,
               isPrimary = pointer.isPrimary,
               prevTarget = touchData.prevTarget,
               getTarget = touchData.getTarget,
-              target = getTarget && getTarget(touch) || touch.target;
+              // remove hit test from pointercancel event
+              // target = getTarget && getTarget(touch) || touch.target;
+              target = captured ? pointer.captureElement :
+                prevTarget || touch.target;
 
             if (isPrimary) {
               touchData.ended = true;
@@ -1714,7 +1713,7 @@
     },
     getTouchAction = function(element, computed) {
       var action = computed.touchAction || computed.content
-        .split(/\s*;\s*/).reduce(function(result, rule) {
+        .replace(/^('|")([\s\S]*)(\1)$/, '$2').split(/\s*;\s*/).reduce(function(result, rule) {
           if (result) {
             return result;
           }
@@ -1727,6 +1726,7 @@
 
           return result;
         }, '');
+
 
       return action;
     },
@@ -1777,7 +1777,12 @@
       return movedOut;
     },
     handleTouchMove = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
-      var fireMouseEvents = touchData.fireMouseEvents;
+      var fireMouseEvents = touchData.fireMouseEvents,
+        captured = pointer.captured,
+        needOver = !captured ||
+          target === pointer.captureElement,
+        needOut = !captured ||
+          prevTarget === pointer.captureElement;
 
       touchData.prevTarget = target;
 
@@ -1786,44 +1791,48 @@
         cancelable: true,
         button: 0,
         buttons: 1,
-        relatedTarget: target // prev target goes here
+        relatedTarget: captured ? null : target // prev target goes here
       }),
       overDict = getMouseDict(touch, {
         bubbles: true,
         cancelable: true,
         button: 0,
         buttons: 1,
-        relatedTarget: prevTarget // prev target goes here
+        relatedTarget: captured ? null : prevTarget // prev target goes here
       }),
       enterDict = getMouseDict(touch, {
         bubbles: false,
         cancelable: false,
         button: 0,
         buttons: 1,
-        relatedTarget: prevTarget // prev target goes here
+        relatedTarget: captured ? null : prevTarget // prev target goes here
       });
 
-      pointer.dispatchEvent(prevTarget, 'out', outDict);
-      fireMouseEvents && dispatchMouseEvent('out', prevTarget, outDict);
+      if (needOut) {
+        pointer.dispatchEvent(prevTarget, 'out', outDict);
+        fireMouseEvents && dispatchMouseEvent('out', prevTarget, outDict);
+      }
 
-      if (!prevTarget.contains(target)) {
+      if (needOut && !prevTarget.contains(target)) {
         var leaveDict = getMouseDict(touch, {
           bubbles: false,
           cancelable: false,
           button: 0,
           buttons: 1,
-          relatedTarget: target // prev target goes here
+          relatedTarget: captured ? null : target // prev target goes here
         });
 
         pointer.dispatchEvent(prevTarget, 'leave', leaveDict);
         fireMouseEvents && dispatchMouseEvent('leave', prevTarget, leaveDict);
       }
 
-      pointer.dispatchEvent(target, 'over', overDict);
-      fireMouseEvents && dispatchMouseEvent('over', target, overDict);
+      if (needOver) {
+        pointer.dispatchEvent(target, 'over', overDict);
+        fireMouseEvents && dispatchMouseEvent('over', target, overDict);
 
-      pointer.dispatchEvent(target, 'enter', enterDict);
-      fireMouseEvents && dispatchMouseEvent('enter', target, enterDict);
+        pointer.dispatchEvent(target, 'enter', enterDict);
+        fireMouseEvents && dispatchMouseEvent('enter', target, enterDict);
+      }
     },
     handleTouchCancel = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
       var fireMouseEvents = touchData.fireMouseEvents;
@@ -1873,6 +1882,8 @@
       }
 
       fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
+
+      implicitReleaseCapture(pointer);
     },
     handlePreEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
       var fireMouseEvents = touchData.fireMouseEvents;
@@ -1916,49 +1927,11 @@
       }
 
       fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
+
+      implicitReleaseCapture(pointer);
     },
     handleTouchEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget, e) {
       console.log('touchEnd:', target, prevTarget);
-      /*var fireMouseEvents = touchData.fireMouseEvents;
-
-      var pastClick = function() {
-        var outDict = getMouseDict(touch, {
-          bubbles: true,
-          cancelable: true,
-          button: 0,
-          buttons: 0,
-          relatedTarget: null
-        }),
-        leaveDict = getMouseDict(touch, {
-          bubbles: false,
-          cancelable: false,
-          button: 0,
-          buttons: 0,
-          relatedTarget: null
-        });
-
-        pointer.dispatchEvent(target, 'out', outDict);
-        fireMouseEvents && dispatchMouseEvent('out', target, outDict);
-
-        // this pointer call is under question
-        // because of specification undefined position of that
-        if (flags.IMMEDIATE_POINTER_LEAVE) {
-          pointer.dispatchEvent(target, 'leave', leaveDict);
-        }
-
-        fireMouseEvents && dispatchMouseEvent('leave', target, leaveDict);
-      };
-
-      var upDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'up', upDict);
-      fireMouseEvents && dispatchMouseEvent('up', target, upDict);*/
 
       // there is possible case then click is fired before touchend
       // in that situations for best synced events sequence probably need to defer click
@@ -1987,7 +1960,7 @@
         // need to properly deliver multitouch property
         (!e.touches.length && !touchData.multitouch) &&
         !touchData.isContextmenuShown && !timedOut && !touchData.ignoreTouch &&
-        target === touchData.startTarget;
+        target === touchData.startTarget && !touchData.movedOut;
 
       console.log(
         !touchData.touchEndCanceled,
@@ -1995,7 +1968,8 @@
         !touchData.isContextmenuShown,
         !timedOut,
         !touchData.ignoreTouch,
-        target === touchData.startTarget
+        target === touchData.startTarget,
+        !touchData.movedOut
       );
 
       touchData.intentToClick = intentToClick;
@@ -2476,6 +2450,9 @@
         }
       };
     });
+
+    touchDevice.capturePointer = function() {};
+    touchDevice.releasePointer = function() {};
 
     touchDevice.bindListener = function(node, event) {
       var full = TOUCH_PREFIX + 'start';

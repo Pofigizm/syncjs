@@ -260,42 +260,50 @@
         }
       },
       shadowEventProp: function(e, key, val) {
-        try {
-          e[key] = val;
-        } catch (err) {};
-        
-        if (e[key] !== val) {
-          // try to change property if configurable
-          // in Chrome should change getter instead of value
+        var shadow = function(val, key) {
           try {
-            Object.defineProperty(e, key, {
-              get: function() {
-                return val;
-              }
-            });
-          } catch (err) {
-            var protoEvent = e;
+            e[key] = val;
+          } catch (err) {};
+          
+          if (e[key] !== val) {
+            // try to change property if configurable
+            // in Chrome should change getter instead of value
+            try {
+              Object.defineProperty(e, key, {
+                get: function() {
+                  return val;
+                }
+              });
+            } catch (err) {
+              var protoEvent = e;
 
-            e = Object.create(e/*, {
-              [key]: {
+              e = Object.create(e/*, {
+                [key]: {
+                  value: val
+                }
+              }*/);
+
+              Object.defineProperty(e, key, {
                 value: val
-              }
-            }*/);
+              });
 
-            Object.defineProperty(e, key, {
-              value: val
-            });
-
-            [
-              'preventDefault',
-              'stopPropagation',
-              'stopImmediatePropagation'
-            ].forEach(function(key) {
-              e[key] = function() {
-                protoEvent[key]()
-              };
-            });
+              [
+                'preventDefault',
+                'stopPropagation',
+                'stopImmediatePropagation'
+              ].forEach(function(key) {
+                e[key] = function() {
+                  protoEvent[key]()
+                };
+              });
+            }
           }
+        };
+
+        if (Sync.isObject(key)) {
+          Sync.each(key, shadow);
+        } else {
+          shadow(val, key);
         }
 
         return e;
@@ -864,7 +872,7 @@
   // ... and we cannot detect that
   bindEnterLeave: if (!('onmouseenter' in document.createElement('div'))/* || hasTouch*/) {
     // hasTouch should be changed to isChromeAndroid
-    // break bindEnterLeave;
+    break bindEnterLeave;
 
     Sync.each({
       mouseenter: 'mouseover',

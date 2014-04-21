@@ -694,354 +694,8 @@
     }
 
     return true;
-  }());
-
-  console.log('mayNeedFastClick:', mayNeedFastClick);
-
-  // mouse type
-
-  (function() {
-    var mouseDevice = new pointers.Device('mouse'),
-      mousePointer = mouseDevice.createPointer(),
-      mouseNatives = {},
-      mouseBindings = {
-        down: function(e, type, event, captured) {
-          var pointerFire = !mousePointer.buttons;
-
-          // pointer cannot be captured before pointer down
-          // so no capture here
-
-          if ('buttons' in e) {
-            mousePointer.buttons = e.buttons;
-          } else {
-            // hook MouseEvent buttons to pointer buttons here
-            mousePointer.buttons += pow(2, e.button);
-          }
-
-          if (pointerFire) {
-            // fire pointer down here
-            
-            var canceled = !mousePointer.dispatchEvent(
-              e.target, type, e, {
-                bubbles: true,
-                cancelable: true
-              });
-
-            if (canceled) {
-              mouseDevice.mouseEventsPrevented = true;
-              e.preventDefault();
-              return;
-            }
-          }
-
-          var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-            type: 'MouseEvent',
-            options: e
-          });
-
-          if (canceled) {
-            e.preventDefault();
-          }
-        },
-        up: function(e, type, event, captured) {
-          if (!mousePointer.buttons) return;
-
-          if ('buttons' in e) {
-            mousePointer.buttons = e.buttons;
-          } else {
-            // hook MouseEvent buttons to pointer buttons here
-            // console.log(mousePointer.buttons, Math.pow(2, e.button))
-            mousePointer.buttons -= Math.pow(2, e.button);
-          }
-
-          var target = captured ? mousePointer.captureElement : e.target;
-
-          if (!mousePointer.buttons) {
-            // fire pointer up here
-            var canceled = !mousePointer.dispatchEvent(target, type, e, {
-              bubbles: true,
-              cancelable: true
-            });
-          }
-
-          if (!mouseDevice.mouseEventsPrevented) {
-            var canceled = !events.dispatchEvent(target, FAKE_PREFIX + event, {
-              type: 'MouseEvent',
-              options: e
-            });
-          }
-
-          if (canceled) {
-            e.preventDefault();
-          }
-
-          implicitReleaseCapture(mousePointer);
-          mouseDevice.mouseEventsPrevented = false;
-        },
-        cancel: function(e, type, event, captured, isCompatibility) {
-          var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-            type: 'MouseEvent',
-            options: e
-          });
-
-          if (canceled) {
-            e.preventDefault();
-            return;
-          }
-
-          if (isCompatibility) return;
-
-          var target = captured ? mousePointer.captureElement : e.target;
-
-          mousePointer.dispatchEvent(target, type, e, {
-            bubbles: true,
-            cancelable: false
-          });
-
-          implicitReleaseCapture(mousePointer);
-          mousePointer.buttons = 0;
-          mouseDevice.mouseEventsPrevented = false;
-        },
-        move: function(e, type, event, captured) {
-          var target = captured ? mousePointer.captureElement : e.target,
-            canceled = !mousePointer.dispatchEvent(target, type, e, {
-              bubbles: true,
-              cancelable: true
-            });
-
-          if (!mouseDevice.mouseEventsPrevented) {
-            var canceled = !events.dispatchEvent(target, FAKE_PREFIX + event, {
-              type: 'MouseEvent',
-              options: e
-            });
-          }
-
-          if (canceled) {
-            e.preventDefault();
-          }
-        }
-      };
-
-    ['over', 'out', 'enter', 'leave'].forEach(function(type) {
-      mouseBindings[type] = function(e, type, event, captured) {
-        // is over or out event
-        var option = type === 'over' || type === 'out';
-
-        var target = captured ? mousePointer.captureElement : e.target;
-
-        // ### override relatedTarget here
-        if (captured) {
-          events.shadowEventProp(e, 'relatedTarget', null);
-        }
-
-        var canceled = !mousePointer.dispatchEvent(target, type, e, {
-          bubbles: option,
-          cancelable: option
-        });
-
-        canceled = !events.dispatchEvent(target, FAKE_PREFIX + event, {
-          type: 'MouseEvent',
-          options: e
-        }) && canceled;
-
-        if (canceled) {
-          e.preventDefault();
-        }
-      }
-    });
-
-    mouseDevice.capturePointer = function(element, pointer) {
-      [
-        'down', 'up', 'move', 'cancel', 'over', 'out'
-      ].forEach(function(event) {
-        triggerDeviceListeners(document, event, 'mouse');
-      });
-
-      triggerDeviceListeners(element, 'enter', 'mouse');
-      triggerDeviceListeners(element, 'leave', 'mouse');
-    };
-
-    mouseDevice.releasePointer = function(element, pointer) {
-      [
-        'down', 'up', 'move', 'cancel', 'over', 'out'
-      ].forEach(function(event) {
-        muteDeviceListeners(document, event, 'mouse');
-      });
-
-      muteDeviceListeners(element, 'enter', 'mouse');
-      muteDeviceListeners(element, 'leave', 'mouse');
-    };
-
-    mouseDevice.bindListener = function(node, event/*, capture*/) {
-      if (isIOS && hasTouch) return;
-
-      var type = MOUSE_PREFIX + event,
-        callback = mouseBindings[event];
-
-      if (event === 'cancel') {
-        type = 'contextmenu';
-      }
-
-      events.addEvent(node, type, {
-        handler: function(e) {
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-
-          var isCompatibility = checkForCompatibility(this, e, event, type),
-            captured = mousePointer.captured,
-            captureElement = mousePointer.captureElement;
-
-          if (captured && ((event === 'enter' || event === 'leave' ||
-              event === 'out' || event === 'over') && e.target !== captureElement)) {
-            return;
-          }
-
-          // console.log('mouse event:', event, type, isCompatibility);
-
-          if (type === 'contextmenu' || (!isCompatibility && !e.isFastClick)) {
-            callback.call(this,
-              e, event, type, captured, isCompatibility);
-          }
-        },
-        callback: callback,
-        capture: /*capture*/ true,
-        method: mouseNatives[type].addEventListener,
-        namespace: NS_MOUSE_POINTER
-      });
-    };
-
-    mouseDevice.unbindListener = function(node, event/*, capture*/) {
-      if (isIOS && hasTouch) return;
-
-      var type = MOUSE_PREFIX + event,
-        callback = mouseBindings[event];
-
-      if (event === 'cancel') {
-        type = 'contextmenu';
-      }
-
-      events.removeEvent(node, type, {
-        callback: callback,
-        capture: /*capture*/ true,
-        method: mouseNatives[type].removeEventListener,
-        namespace: NS_MOUSE_POINTER
-      });
-    };
-
-    var checkForCompatibility = function(node, e, event, type) {
-      if (!(touchDevice = pointers.getDevice('touch'))) return;
-
-      var touchData = touchDevice.currentPrimaryTouch,
-        prevTouchData = touchDevice.prevPrimaryTouch,
-        touchDevice;
-
-      /*if (touchData) {
-        console.log(touchData, type === 'contextmenu',
-          e.timeStamp - touchData.startTime >= 450, !touchData.ended,
-          !touchData.clicked);
-      }*/
-
-      if (touchData && type === 'contextmenu' &&
-        e.timeStamp - touchData.startTime >= 450 && !touchData.ended &&
-        !touchData.clicked) {
-        return true;
-      }
-
-      // console.log(e, 'compatibility check');
-      if (touchData && touchData.moved && isAndroid) return;
-
-      // console.log('prev:', e.target, prevTouchData && prevTouchData.startTouch.target);
-
-      if ((event === 'out' || event === 'leave') && (prevTouchData &&
-        prevTouchData.startTouch.target === e.target)) {
-        return true;
-      }
-
-      if (touchData) {
-        var touch = touchData.startTouch,
-          xMin = touch.clientX - 10,
-          xMax = touch.clientX + 10,
-          yMin = touch.clientY - 10,
-          yMax = touch.clientY + 10;
-
-        // console.log('checked:', [e.clientX, e.clientY], [touch.clientX, touch.clientY],
-        //   (xMin < e.clientX && xMax > e.clientX &&
-        //   yMin < e.clientY && yMax > e.clientY));
-
-        if (touch.target === e.target &&
-          xMin < e.clientX && xMax > e.clientX &&
-          yMin < e.clientY && yMax > e.clientY) {
-          return true;
-        }
-      }
-    };
-
-    var syncMouseEvents = function(deviceNatives, full, event) {
-      events.syncEvent(full, function(synced) {
-        deviceNatives[full] = synced;
-
-        return {
-          addEventListener: function(type, callback, capture) {
-            if (event) {
-              triggerDeviceListeners(this, event, 'mouse');
-
-              if (hasTouch) {
-                triggerDeviceListeners(this, event, 'touch');
-              }
-            }
-
-            !hasMouseListeners && (hasMouseListeners = true);
-
-            // console.log('sync add:', FAKE_PREFIX + full);
-
-            events.addEvent(this, FAKE_PREFIX + full, {
-              handler: function(e) {
-                e = shadowEventType(e, type);
-                callback.call(this, e);
-              },
-              callback: callback,
-              capture: capture
-            });
-          },
-          removeEventListener: function(type, callback, capture) {
-            if (event) {
-              muteDeviceListeners(this, event, 'mouse');
-
-              if (hasTouch) {
-                muteDeviceListeners(this, event, 'touch');
-              }
-            }
-
-            events.addEvent(this, FAKE_PREFIX + full, {
-              callback: callback,
-              capture: capture
-            });
-          }
-        }
-      });
-    };
-
-    syncMouseEvents(mouseNatives, 'contextmenu', 'cancel');
-
-    // create fake mouse event
-    [
-      'down',
-      'up',
-      'move',
-      'over',
-      'out',
-      'enter',
-      'leave'
-    ].forEach(function(event) {
-      var full = MOUSE_PREFIX + event;
-
-      syncMouseEvents(mouseNatives, full, event);
-    });
-  }());
-
-  // touch type
-
-  var findScrollParent = function(parent, computed) {
+  }()),
+  findScrollParent = function(parent, computed) {
     var parents = [{
         computed: computed,
         element: parent
@@ -1084,6 +738,10 @@
       pointer.captureElement.releasePointerCapture(pointer.id);
     }
   };
+
+  console.log('mayNeedFastClick:', mayNeedFastClick);
+
+  // touch type
 
   hasTouch && (function() {
     var touchDevice = new pointers.Device('touch'),
@@ -2419,11 +2077,27 @@
 
               console.log('touch contextmenu');
 
-              if (touchData) {
-                touchData.isContextmenuShown = true;
+              if (!touchData) return;
+
+              /*if (touchData) {
+                console.log(
+                  touchData,
+                  type === 'contextmenu',
+                  e.timeStamp - touchData.startTime >= 450,
+                  !touchData.ended,
+                  !touchData.clicked
+                );
+              }*/
+
+              if (e.timeStamp - touchData.startTime >= 450 &&
+                !touchData.ended && !touchData.clicked) {
+                var isTouchEvent = true;
               }
 
-              if (isBB10 && touchData) {
+              e.isTouchEvent = true;
+              touchData.isContextmenuShown = true;
+
+              if (isBB10) {
                 var touchStart = TOUCH_PREFIX + 'start';
 
                 events.addEvent(document, touchStart, {
@@ -2530,6 +2204,342 @@
           }
         };
       });
+    });
+  }());
+
+  // mouse type
+  (function() {
+    var mouseDevice = new pointers.Device('mouse'),
+      mousePointer = mouseDevice.createPointer(),
+      mouseNatives = {},
+      mouseBindings = {
+        down: function(e, type, event, captured) {
+          var pointerFire = !mousePointer.buttons;
+
+          // pointer cannot be captured before pointer down
+          // so no capture here
+
+          if ('buttons' in e) {
+            mousePointer.buttons = e.buttons;
+          } else {
+            // hook MouseEvent buttons to pointer buttons here
+            mousePointer.buttons += pow(2, e.button);
+          }
+
+          if (pointerFire) {
+            // fire pointer down here
+            
+            var canceled = !mousePointer.dispatchEvent(
+              e.target, type, e, {
+                bubbles: true,
+                cancelable: true
+              });
+
+            if (canceled) {
+              mouseDevice.mouseEventsPrevented = true;
+              e.preventDefault();
+              return;
+            }
+          }
+
+          var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
+            type: 'MouseEvent',
+            options: e
+          });
+
+          if (canceled) {
+            e.preventDefault();
+          }
+        },
+        up: function(e, type, event, captured) {
+          if (!mousePointer.buttons) return;
+
+          if ('buttons' in e) {
+            mousePointer.buttons = e.buttons;
+          } else {
+            // hook MouseEvent buttons to pointer buttons here
+            // console.log(mousePointer.buttons, Math.pow(2, e.button))
+            mousePointer.buttons -= Math.pow(2, e.button);
+          }
+
+          var target = captured ? mousePointer.captureElement : e.target;
+
+          if (!mousePointer.buttons) {
+            // fire pointer up here
+            var canceled = !mousePointer.dispatchEvent(target, type, e, {
+              bubbles: true,
+              cancelable: true
+            });
+          }
+
+          if (!mouseDevice.mouseEventsPrevented) {
+            var canceled = !events.dispatchEvent(target, FAKE_PREFIX + event, {
+              type: 'MouseEvent',
+              options: e
+            });
+          }
+
+          if (canceled) {
+            e.preventDefault();
+          }
+
+          implicitReleaseCapture(mousePointer);
+          mouseDevice.mouseEventsPrevented = false;
+        },
+        cancel: function(e, type, event, captured) {
+          var target = captured ? mousePointer.captureElement : e.target;
+
+          mousePointer.dispatchEvent(target, type, e, {
+            bubbles: true,
+            cancelable: false
+          });
+
+          implicitReleaseCapture(mousePointer);
+          mousePointer.buttons = 0;
+          mouseDevice.mouseEventsPrevented = false;
+
+          console.log('handle mouse contextmenu');
+        },
+        move: function(e, type, event, captured) {
+          var target = captured ? mousePointer.captureElement : e.target,
+            canceled = !mousePointer.dispatchEvent(target, type, e, {
+              bubbles: true,
+              cancelable: true
+            });
+
+          if (!mouseDevice.mouseEventsPrevented) {
+            var canceled = !events.dispatchEvent(target, FAKE_PREFIX + event, {
+              type: 'MouseEvent',
+              options: e
+            });
+          }
+
+          if (canceled) {
+            e.preventDefault();
+          }
+        }
+      };
+
+    ['over', 'out', 'enter', 'leave'].forEach(function(type) {
+      mouseBindings[type] = function(e, type, event, captured) {
+        // is over or out event
+        var option = type === 'over' || type === 'out';
+
+        var target = captured ? mousePointer.captureElement : e.target;
+
+        // ### override relatedTarget here
+        if (captured) {
+          events.shadowEventProp(e, 'relatedTarget', null);
+        }
+
+        var canceled = !mousePointer.dispatchEvent(target, type, e, {
+          bubbles: option,
+          cancelable: option
+        });
+
+        canceled = !events.dispatchEvent(target, FAKE_PREFIX + event, {
+          type: 'MouseEvent',
+          options: e
+        }) && canceled;
+
+        if (canceled) {
+          e.preventDefault();
+        }
+      }
+    });
+
+    mouseDevice.capturePointer = function(element, pointer) {
+      [
+        'down', 'up', 'move', 'cancel', 'over', 'out'
+      ].forEach(function(event) {
+        triggerDeviceListeners(document, event, 'mouse');
+      });
+
+      triggerDeviceListeners(element, 'enter', 'mouse');
+      triggerDeviceListeners(element, 'leave', 'mouse');
+    };
+
+    mouseDevice.releasePointer = function(element, pointer) {
+      [
+        'down', 'up', 'move', 'cancel', 'over', 'out'
+      ].forEach(function(event) {
+        muteDeviceListeners(document, event, 'mouse');
+      });
+
+      muteDeviceListeners(element, 'enter', 'mouse');
+      muteDeviceListeners(element, 'leave', 'mouse');
+    };
+
+    mouseDevice.bindListener = function(node, event/*, capture*/) {
+      if ((isIOS || isAndroid) && hasTouch) return;
+
+      var type = MOUSE_PREFIX + event,
+        callback = mouseBindings[event];
+
+      if (event === 'cancel') {
+        type = 'contextmenu';
+      }
+
+      events.addEvent(node, type, {
+        handler: function(e) {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          if (event === 'cancel') {
+            console.log('contextmenu from mouse');
+          }
+
+          var isCompatibility = checkForCompatibility(this, e, event, type),
+            captured = mousePointer.captured,
+            captureElement = mousePointer.captureElement;
+
+          if (captured && ((event === 'enter' || event === 'leave' ||
+              event === 'out' || event === 'over') && e.target !== captureElement)) {
+            return;
+          }
+
+          var contextMenuShown =
+            handleContextMenu.call(this, e, event, type, captured);
+
+          if (!isCompatibility && !e.isFastClick &&
+            !e.isTouchEvent && !contextMenuShown) {
+            callback.call(this,
+              e, event, type, captured, isCompatibility);
+          }
+        },
+        callback: callback,
+        capture: /*capture*/ true,
+        method: mouseNatives[type].addEventListener,
+        namespace: NS_MOUSE_POINTER
+      });
+    };
+
+    mouseDevice.unbindListener = function(node, event/*, capture*/) {
+      if (isIOS && hasTouch) return;
+
+      var type = MOUSE_PREFIX + event,
+        callback = mouseBindings[event];
+
+      if (event === 'cancel') {
+        type = 'contextmenu';
+      }
+
+      events.removeEvent(node, type, {
+        callback: callback,
+        capture: /*capture*/ true,
+        method: mouseNatives[type].removeEventListener,
+        namespace: NS_MOUSE_POINTER
+      });
+    };
+
+    var checkForCompatibility = function(node, e, event, type) {
+      if (!(touchDevice = pointers.getDevice('touch'))) return;
+
+      var touchData = touchDevice.currentPrimaryTouch,
+        prevTouchData = touchDevice.prevPrimaryTouch,
+        touchDevice;
+
+      // console.log(e, 'compatibility check');
+      if (touchData && touchData.moved && isAndroid) return;
+
+      // console.log('prev:', e.target, prevTouchData && prevTouchData.startTouch.target);
+
+      if ((event === 'out' || event === 'leave') && (prevTouchData &&
+        prevTouchData.startTouch.target === e.target)) {
+        return true;
+      }
+
+      if (touchData) {
+        var touch = touchData.startTouch,
+          xMin = touch.clientX - 10,
+          xMax = touch.clientX + 10,
+          yMin = touch.clientY - 10,
+          yMax = touch.clientY + 10;
+
+        // console.log('checked:', [e.clientX, e.clientY], [touch.clientX, touch.clientY],
+        //   (xMin < e.clientX && xMax > e.clientX &&
+        //   yMin < e.clientY && yMax > e.clientY));
+
+        if (touch.target === e.target &&
+          xMin < e.clientX && xMax > e.clientX &&
+          yMin < e.clientY && yMax > e.clientY) {
+          return true;
+        }
+      }
+    },
+    handleContextMenu = function(e, event, type, captured) {
+      var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
+        type: 'MouseEvent',
+        options: e
+      });
+
+      if (canceled) {
+        e.preventDefault();
+      }
+
+      return !canceled;
+    };
+
+    var syncMouseEvents = function(deviceNatives, full, event) {
+      events.syncEvent(full, function(synced) {
+        deviceNatives[full] = synced;
+
+        return {
+          addEventListener: function(type, callback, capture) {
+            if (event) {
+              triggerDeviceListeners(this, event, 'mouse');
+
+              if (hasTouch) {
+                triggerDeviceListeners(this, event, 'touch');
+              }
+            }
+
+            !hasMouseListeners && (hasMouseListeners = true);
+
+            // console.log('sync add:', FAKE_PREFIX + full);
+
+            events.addEvent(this, FAKE_PREFIX + full, {
+              handler: function(e) {
+                e = shadowEventType(e, type);
+                callback.call(this, e);
+              },
+              callback: callback,
+              capture: capture
+            });
+          },
+          removeEventListener: function(type, callback, capture) {
+            if (event) {
+              muteDeviceListeners(this, event, 'mouse');
+
+              if (hasTouch) {
+                muteDeviceListeners(this, event, 'touch');
+              }
+            }
+
+            events.addEvent(this, FAKE_PREFIX + full, {
+              callback: callback,
+              capture: capture
+            });
+          }
+        }
+      });
+    };
+
+    syncMouseEvents(mouseNatives, 'contextmenu', 'cancel');
+
+    // create fake mouse event
+    [
+      'down',
+      'up',
+      'move',
+      'over',
+      'out',
+      'enter',
+      'leave'
+    ].forEach(function(event) {
+      var full = MOUSE_PREFIX + event;
+
+      syncMouseEvents(mouseNatives, full, event);
     });
   }());
 }(Sync));

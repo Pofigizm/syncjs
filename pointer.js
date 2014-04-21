@@ -8,6 +8,12 @@
         MOUSE_EVENTS: true,
         TOUCH_EVENTS: true,
         FIX_FLING_STOP: true,
+        // Two main issues for this:
+        // * firefox prevents contextmenu on stopPropagation()
+        //   on 'contextmenu' event (https://bugzilla.mozilla.org/show_bug.cgi?id=998940)
+        // * Android Stock Browser (prior to 4.4) fires compatibilty
+        //   mouse-events before touchstart
+        HANDLE_MOUSE_EVENTS_ANDROID: false,
         TOUCHMOVE_SLOP_SIZE: 10,
         // one of: auto, pointers-first, touch-first
         TOUCH_COMPATIBILITY_MODE: 'touch-first'
@@ -384,6 +390,10 @@
     }
 
     if (!pointer.buttons) return;
+
+    if (pointer.captured) {
+      implicitReleaseCapture(pointer);
+    }
 
     var device = pointers.getDevice(pointer.type),
       trackBoundaries = (options ? options.trackBoundaries : true) !== false;
@@ -2371,7 +2381,8 @@
     };
 
     mouseDevice.bindListener = function(node, event/*, capture*/) {
-      if ((isIOS || isAndroid) && hasTouch) return;
+      if (hasTouch && (isIOS ||
+        (isAndroid && !flags.HANDLE_MOUSE_EVENTS_ANDROID))) return;
 
       var type = MOUSE_PREFIX + event,
         callback = mouseBindings[event];

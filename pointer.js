@@ -547,7 +547,13 @@
       return this.pointers[0] === pointer;
     },
     addPointer: function(pointer) {
+      var isPrimary = !this.pointers.length;
+
       this.pointers.push(pointer);
+
+      if (isPrimary) {
+        this.primaryPointer = pointer;
+      }
     },
     removePointer: function(pointer) {
       var devicePointers = this.pointers,
@@ -555,11 +561,13 @@
 
       if (index !== -1) {
         devicePointers.splice(index, 1);
+
+        if (pointer === this.primaryPointer) {
+          this.primaryPointer = null;
+        }
       }
     },
-    get primary() {
-      return this.pointers[0] || null;
-    }
+    primaryPointer: null
   };
 
   pointers.Pointer = function(device) {
@@ -574,7 +582,7 @@
 
   pointers.Pointer.prototype = {
     get isPrimary() {
-      return this.device.isPrimaryPointer(this);
+      return this.device.primaryPointer === this;
     },
     get button() {
       var buttons = this.buttons,
@@ -676,7 +684,7 @@
 
   // ###################
 
-  var mayNeedFastClick = (function() {
+  var mayNeedFastClick = (function() { return true;
     var metaViewport = document.querySelector('meta[name="viewport"]'),
       hasNoScale = metaViewport &&
         metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1;
@@ -853,9 +861,9 @@
               // for touchStartCanceled this work already did
               !touchStartCanceled)
             ) {
-              console.log('cancel fast click by moved out');
+              // console.log('cancel fast click by moved out');
               touchData.needFastClick = false;
-              console.log('prevent touchmove by !touchAction');
+              // console.log('prevent touchmove by !touchAction');
               e.preventDefault();
 
               // remove touchmove listeners here
@@ -1044,6 +1052,8 @@
     var initTouchStart = function(e, type) {
       var touches = e.changedTouches,
         self = this;
+
+      console.log(e.target, 'touchstart');
 
       var handleTouch = function(touch) {
         var id = touch.identifier,
@@ -1794,13 +1804,16 @@
           if (firstScroll) {
             firstScroll = false;
 
-            // console.log('first scroll', element);
+            console.log('bind scroll', element);
 
             scrollStyleElem = parent.isWin ?
               document.documentElement : parent.element;
             prevCSSPointerEvents = scrollStyleElem.style.pointerEvents;
 
-            if (prevCSSPointerEvents === 'none') alert(13);
+            if (prevCSSPointerEvents === 'none') {
+              console.log('wtf 123');
+              debugger;
+            }
 
             scrollStyleElem.style.pointerEvents = 'none';
             scrollCache.styleElem = scrollStyleElem;
@@ -1812,7 +1825,13 @@
 
           scrollTimer = setTimeout(function() {
             scrollTimer = null;
-            unbindScrollFix(touchData);
+            
+            if (touchData.ended) {
+              unbindScrollFix(touchData);
+            } else {
+              scrollHandler();
+            }
+
           }, SCROLL_FIX_DELAY);
         };
 
@@ -1827,7 +1846,7 @@
 
       touchData.scrollClickFixed = false;
 
-      // console.log('unbind:');
+      console.log('unbind scroll:');
 
       scrollables.forEach(function(parent) {
         var element = parent.element,
@@ -2038,7 +2057,7 @@
                 }
               }
 
-              if (touchData.ended && sameTouch &&
+              if (sameTouch && touchData.ended &&
                 (!touchData.intentToClick || touchData.fastClicked)) {
                 console.log('prevent click by not need click');
                 e.preventDefault();

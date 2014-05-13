@@ -32,7 +32,7 @@
     pow = Math.pow,
     abs = Math.abs,
     uidInc = 0,
-    hasTouch = 'ontouchstart' in document,
+    hasTouch = true || 'ontouchstart' in document,
     logger = new Sync.Logger('pointers');
 
   {
@@ -701,6 +701,9 @@
 
       // Chrome 32 and above with width=device-width or less don't need FastClick
       if (flags.DETECT_CHROME_VERSION && isChromeAndroid && isChromeBelow31 &&
+        // https://github.com/jakearchibald/fastclick/commit/4aedb2129c6e7daf146f0b8d2f933b8779a9f486
+        // some fix from FastClick, need more research about those properties
+        // and page zooming
           window.innerWidth <= window.screen.width) {
         return false;
       }
@@ -767,9 +770,26 @@
       touchesMap = {},
       touchBindings = {
         move: function(e, type) {
-          var touches = e.targetTouches,
+          var targetTouches = e.targetTouches,
             touchCanceled,
             touchDispatched;
+
+          var firstMove,
+            touches = slice.call(touches).map(function(touch) {
+              var id = touch.identifier,
+                touchData = touchesMap[id];
+
+              if (firstMove !== false) {
+                firstMove = !touchData.moved;
+              }
+
+              return touchData;
+            });
+
+          // prevent pinch-to-zoom gesture
+          if (touches.length > 1 && firstMove) {
+            e.preventDefault();
+          }
 
           var handleTouch = function(touch) {
             var id = touch.identifier,
@@ -912,10 +932,10 @@
             }
           };
 
-          if (touches.length) {
-            slice.call(touches).forEach(handleTouch);
+          if (targetTouches.length) {
+            slice.call(targetTouches).forEach(handleTouch);
           } else {
-            handleTouch(touches[0]);
+            handleTouch(targetTouches[0]);
           }
         },
         end: function(e, type) {
@@ -974,6 +994,8 @@
             }
 
             cleanUpTouch(touchData);
+            touchHelper.leaveStream(touchData);
+            touchData.stream = null;
 
             if (!e.targetTouches.length) {
               removeTouchBindings(touchData.startTarget, type);
@@ -1011,25 +1033,14 @@
               touchData.canceled = true;
             }
 
-            /*touchesMap[id] = null;
-            touchDevice.lastEnterTarget = null;
-
-            if (isPrimary) {
-              touchDevice.mouseEventsPrevented = false;
-            }*/
-
             if (!touchData.ignoreTouch) {
               handleTouchCancel(touch, touchData, pointer,
                 isPrimary, target, prevTarget, e);
             }
 
             cleanUpTouch(touchData);
-
-            /*pointer.destroy();
-
-            if (isPrimary && touchData.clicked) {
-              updateDevicePrimary();
-            }*/
+            touchHelper.leaveStream(touchData);
+            touchData.stream = null;
 
             if (!e.targetTouches.length) {
               removeTouchBindings(touchData.startTarget, type);
@@ -1042,12 +1053,90 @@
             handleTouch(touches[0]);
           }
         }
+      },
+      touchHelper = {
+        stream: null,
+        Stream: function() {
+          this.touches = [];
+        },
+        getStream: function(touchData) {
+          var stream = this.stream ||
+            (this.stream = new this.Stream());
+
+          stream.addTouchData(touchData);
+        },
+        leaveStream: function(touchData) {
+          var stream = this.stream;
+
+          if (!stream) {
+            throw new Error('Cannot leave touch-stream without stream');
+          }
+
+          stream.removeTouchData(touchData);
+
+          if (!stream.isActual) {
+            this.stream = stream = null;
+          }
+        }
       };
+
+    touchHelper.Stream.prototype = {
+      state: '',
+      addTouchData: function(touchData) {
+        var touches = this.touches;
+
+        if (!touches.length) {
+          this.isActual = true;
+        }
+
+        touches.push(touchData);
+      },
+      removeTouchData: function(touchData) {
+        var touches = this.touches,
+          index = touches.indexOf(touchData);
+
+        if (index !== -1) {
+          touches.splice(index, 1);
+
+          if (!touches.length) {
+            this.isActual = false;
+          }
+        }
+      },
+      isActual: null
+    };
+
+    /*,
+    touchActionBits = {
+      'none': 0,
+      'pan-x': 1,
+      'pan-y': 2,
+
+      'scroll:' 3,
+
+      // ignored
+      // 'pinch-zoom': 4,
+
+      // set
+      'manipulation': 7,
+
+      // set
+      'auto': 15
+    };*/
+
+    var touchActionBits = {
+      'none': 1 << 0,
+      'pan-x': 1 << 1,
+      'pan-y': 1 << 2,
+      'manipulation': 1 << 3,
+      'auto': 1 << 4
+    };
 
     var TOUCH_SCROLL_CACHE = 'touch_scroll_cache',
       TOUCH_LISTENERS_CACHE = 'touch_listeners_cache',
       SCROLL_FIX_DELAY = 500,
-      TOUCH_CLICK_TIMEOUT = 800;
+      TOUCH_CLICK_TIMEOUT = 800,
+      ELEMENT_DISABLED_FOR_SCROLL = '_element_disabled_for_scroll_';
 
     var initTouchStart = function(e, type) {
       var touches = e.changedTouches,
@@ -1131,6 +1220,8 @@
           }
         };
 
+        touchData.stream = touchHelper.getStream(touchData);
+
         /*if (!isPrimary) {
           touchDevice.primary.multitouch = true;
         }*/
@@ -1164,9 +1255,9 @@
 
             if (!determinedAction) {
               var computed = parent.computed || getComputedStyle(element),
-                action = getTouchAction(element, computed);
+                action = getTouchAction(handleContentTouchAction(computed.content));
 
-              if (action === 'none') {
+              if (action === touchActionBits['none']) {
                 touchAction = false;
                 determinedAction = true;
               }
@@ -1389,22 +1480,82 @@
 
       return target;
     },
-    getTouchAction = function(element, computed) {
-      var action = computed.touchAction || computed.content
-        .replace(/^('|")([\s\S]*)(\1)$/, '$2').split(/\s*;\s*/).reduce(function(result, rule) {
-          if (result) {
-            return result;
+    mergeTouchAction /*= window.mergeTouchAction*/ = function(array) {
+      var result = array[0],
+        scrollVal = (touchActionBits['pan-x'] | touchActionBits['pan-y']);
+
+      for (var i = 1, len = array.length, action; i < len; i++) {
+        action = array[i];
+
+        if (action & scrollVal) {
+          if (result & scrollVal) {
+            result |= action;
           }
 
-          rule = rule.split(/\s*:\s*/);
-
-          if (rule[0] === 'touch-action') {
-            return rule[1];
+          if (result > scrollVal) {
+            result = action;
           }
+        } else if (result > action) {
+          result = action;
+        }
 
+        if (result /* & */ === touchActionBits['none']) {
+          break;
+        }
+      }
+
+      return result
+    },
+    handleContentTouchAction = function(content) {
+      var action = content.replace(/^('|")([\s\S]*)(\1)$/, '$2').split(/\s*;\s*/).reduce(function(result, rule) {
+        if (result) {
           return result;
-        }, '');
+        }
 
+        rule = rule.split(/\s*:\s*/);
+
+        if (rule[0] === 'touch-action') {
+          return rule[1];
+        }
+
+        return result;
+      }, '');
+
+      return action;
+    },
+    getTouchAction /*= window.getTouchAction*/ = function(action) {
+      var propError;
+
+      action = action.split(/\s+/).reduce(function(res, key) {
+        if (propError) return res;
+
+        if (!hasOwn.call(touchActionBits, key)) {
+          propError = true;
+          return res;
+        }
+
+        var bit = touchActionBits[key];
+
+        // console.log('res & bit:', res, bit, res & bit)
+
+        if (res & bit) {
+          propError = true;
+          return res;
+        }
+
+        if (res && (bit & (touchActionBits.none |
+          touchActionBits.auto |
+          touchActionBits.manipulation))) {
+          propError = true;
+          return res;
+        }
+
+        return res | bit;
+      }, 0);
+
+      if (propError) {
+        return 0;
+      }
 
       return action;
     },
@@ -1740,6 +1891,8 @@
       touchData.fastClicked = true;
       // console.log('click dispatched');
     },
+    // need fix iOS from touchData.scrollClickFixed to
+    // stream.scrollClickFixed
     fixIOSScroll = function(touchData) {
       var scrolledParent,
         movedOut = touchData.movedOut;
@@ -1770,35 +1923,42 @@
           scrolledForEvent = scrolledParent.element,
           prevCSSPointerEvents = scrolledForStyle.style.pointerEvents;
 
+        if (scrolledParent.isWin) {
+          Sync.cache(scrolledForStyle, ELEMENT_DISABLED_FOR_SCROLL, 1);
+        }
+
         scrolledForStyle.style.pointerEvents = 'none !important';
 
         scrolledForEvent.addEventListener('scroll', function scrollHandler() {
           scrolledForEvent.removeEventListener('scroll', scrollHandler);
           scrolledForStyle.style.pointerEvents = prevCSSPointerEvents;
+
+          if (scrolledParent.isWin) {
+            Sync.cache(scrolledForStyle, ELEMENT_DISABLED_FOR_SCROLL, 0);
+          }
         });
 
         // prevent pointer events until scrolled
       }
     },
     bindScrollFix = function(touchData) {
-      if (isIOS || !touchData || touchData.scrollClickFixed) return;
+      var stream = touchData.stream,
+        scrollables;
 
-      var scrollables = touchData.scrollables;
+      if (isIOS || !touchData || stream.scrollClickFixed) return;
 
-      touchData.scrollClickFixed = true;
+      scrollables = touchData.scrollables;
+      stream.scrollClickFixed = true;
 
       scrollables.forEach(function(parent) {
         var element = parent.element,
           scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE),
           scrollTimer,
-
           firstScroll = true,
           scrollStyleElem,
           prevCSSPointerEvents;
 
         if (scrollCache.scrollHandler) return;
-
-        // if (!element) return;
 
         var scrollHandler = function() {
           if (firstScroll) {
@@ -1806,8 +1966,13 @@
 
             console.log('bind scroll', element);
 
-            scrollStyleElem = parent.isWin ?
-              document.documentElement : parent.element;
+            if (parent.isWin) {
+              scrollStyleElem = document.documentElement;
+              Sync.cache(scrollStyleElem, ELEMENT_DISABLED_FOR_SCROLL, 1);
+            } else {
+              scrollStyleElem = parent.element;
+            }
+
             prevCSSPointerEvents = scrollStyleElem.style.pointerEvents;
 
             if (prevCSSPointerEvents === 'none') {
@@ -1826,7 +1991,7 @@
           scrollTimer = setTimeout(function() {
             scrollTimer = null;
             
-            if (touchData.ended) {
+            if (!stream.isActual) {
               unbindScrollFix(touchData);
             } else {
               scrollHandler();
@@ -1840,11 +2005,13 @@
       });
     },
     unbindScrollFix = function(touchData) {
-      if (isIOS || !touchData || !touchData.scrollClickFixed) return;
+      var stream = touchData.stream,
+        scrollables;
 
-      var scrollables = touchData.scrollables;
+      if (isIOS || !touchData || !stream.scrollClickFixed) return;
 
-      touchData.scrollClickFixed = false;
+      scrollables = touchData.scrollables;
+      stream.scrollClickFixed = false;
 
       console.log('unbind scroll:');
 
@@ -1855,6 +2022,10 @@
         if (scrollCache.styleElem) {
           scrollCache.styleElem.style.pointerEvents = scrollCache.prevCSSPointerEvents;
           // console.log('set prev events:', scrollCache.styleElem.style.pointerEvents);
+
+          if (parent.isWin) {
+            Sync.cache(scrollCache.styleElem, ELEMENT_DISABLED_FOR_SCROLL, 0);
+          }
 
           scrollCache.styleElem = null;
           scrollCache.prevCSSPointerEvents = '';
@@ -2428,8 +2599,10 @@
             return;
           }
 
-          var contextMenuShown =
-            handleContextMenu.call(this, e, event, type, captured);
+          if (event === 'cancel') {
+            var contextMenuShown =
+              handleContextMenu.call(this, e, event, type, captured);
+          }
 
           if (!isCompatibility && !e.isFastClick &&
             !e.isTouchEvent && !contextMenuShown) {

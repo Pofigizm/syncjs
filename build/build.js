@@ -1,4 +1,4 @@
-var conf = require('./build.conf.json'),
+var conf = require((process.argv[2] + '').trim() || './build.conf.json'),
   fs = require('fs'),
   paths = require('path');
 

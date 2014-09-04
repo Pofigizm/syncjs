@@ -484,787 +484,382 @@ if (typeof WeakMap === 'undefined') {
   window.WeakMap = WeakMap;
   })();
 }
+/*! Native Promise Only
+    v0.5.0-a (c) Kyle Simpson
+    MIT License: http://getify.mit-license.org
+*/
 
+(function UMD(name,context,definition){
+  // special form of UMD for polyfilling across evironments
+  context[name] = context[name] || definition();
+})("Promise",typeof global !== "undefined" ? global : this,function DEF(){
+  /*jshint validthis:true */
+  "use strict";
 
-// https://github.com/jakearchibald/ES6-Promise
-// Copyright (c) 2013 Yehuda Katz, Tom Dale, and contributors
-// https://github.com/jakearchibald/es6-promise/blob/master/LICENSE
+  var sync_schedule = false, cycle, scheduling_queue,
+    timer = (typeof setImmediate !== "undefined") ?
+      function timer(fn) { return setImmediate(fn); } :
+      setTimeout,
+    builtInProp = Object.defineProperty ?
+      function builtInProp(obj,name,val,config) {
+        return Object.defineProperty(obj,name,{
+          value: val,
+          writable: true,
+          configurable: config !== false
+        });
+      } :
+      function builtInProp(obj,name,val) {
+        obj[name] = val;
+        return obj;
+      }
+  ;
 
+  // Note: using a queue instead of array for efficiency
+  function Queue() {
+    var first, last, item;
 
-(function() {
-var define, requireModule, require, requirejs;
-
-(function() {
-  var registry = {}, seen = {};
-
-  define = function(name, deps, callback) {
-    registry[name] = { deps: deps, callback: callback };
-  };
-
-  requirejs = require = requireModule = function(name) {
-  requirejs._eak_seen = registry;
-
-    if (seen[name]) { return seen[name]; }
-    seen[name] = {};
-
-    if (!registry[name]) {
-      throw new Error("Could not find module " + name);
+    function Item(fn,self) {
+      this.fn = fn;
+      this.self = self;
+      this.next = void 0;
     }
 
-    var mod = registry[name],
-        deps = mod.deps,
-        callback = mod.callback,
-        reified = [],
-        exports;
-
-    for (var i=0, l=deps.length; i<l; i++) {
-      if (deps[i] === 'exports') {
-        reified.push(exports = {});
-      } else {
-        reified.push(requireModule(resolve(deps[i])));
-      }
-    }
-
-    var value = callback.apply(this, reified);
-    return seen[name] = exports || value;
-
-    function resolve(child) {
-      if (child.charAt(0) !== '.') { return child; }
-      var parts = child.split("/");
-      var parentBase = name.split("/").slice(0, -1);
-
-      for (var i=0, l=parts.length; i<l; i++) {
-        var part = parts[i];
-
-        if (part === '..') { parentBase.pop(); }
-        else if (part === '.') { continue; }
-        else { parentBase.push(part); }
-      }
-
-      return parentBase.join("/");
-    }
-  };
-})();
-
-define("promise/all", 
-  ["./utils","exports"],
-  function(__dependency1__, __exports__) {
-    "use strict";
-    /* global toString */
-
-    var isArray = __dependency1__.isArray;
-    var isFunction = __dependency1__.isFunction;
-
-    /**
-      Returns a promise that is fulfilled when all the given promises have been
-      fulfilled, or rejected if any of them become rejected. The return promise
-      is fulfilled with an array that gives all the values in the order they were
-      passed in the `promises` array argument.
-
-      Example:
-
-      ```javascript
-      var promise1 = RSVP.resolve(1);
-      var promise2 = RSVP.resolve(2);
-      var promise3 = RSVP.resolve(3);
-      var promises = [ promise1, promise2, promise3 ];
-
-      RSVP.all(promises).then(function(array){
-        // The array here would be [ 1, 2, 3 ];
-      });
-      ```
-
-      If any of the `promises` given to `RSVP.all` are rejected, the first promise
-      that is rejected will be given as an argument to the returned promises's
-      rejection handler. For example:
-
-      Example:
-
-      ```javascript
-      var promise1 = RSVP.resolve(1);
-      var promise2 = RSVP.reject(new Error("2"));
-      var promise3 = RSVP.reject(new Error("3"));
-      var promises = [ promise1, promise2, promise3 ];
-
-      RSVP.all(promises).then(function(array){
-        // Code here never runs because there are rejected promises!
-      }, function(error) {
-        // error.message === "2"
-      });
-      ```
-
-      @method all
-      @for RSVP
-      @param {Array} promises
-      @param {String} label
-      @return {Promise} promise that is fulfilled when all `promises` have been
-      fulfilled, or rejected if any of them become rejected.
-    */
-    function all(promises) {
-      /*jshint validthis:true */
-      var Promise = this;
-
-      if (!isArray(promises)) {
-        throw new TypeError('You must pass an array to all.');
-      }
-
-      return new Promise(function(resolve, reject) {
-        var results = [], remaining = promises.length,
-        promise;
-
-        if (remaining === 0) {
-          resolve([]);
+    return {
+      add: function add(fn,self) {
+        item = new Item(fn,self);
+        if (last) {
+          last.next = item;
         }
-
-        function resolver(index) {
-          return function(value) {
-            resolveAll(index, value);
-          };
+        else {
+          first = item;
         }
-
-        function resolveAll(index, value) {
-          results[index] = value;
-          if (--remaining === 0) {
-            resolve(results);
-          }
-        }
-
-        for (var i = 0; i < promises.length; i++) {
-          promise = promises[i];
-
-          if (promise && isFunction(promise.then)) {
-            promise.then(resolver(i), reject);
-          } else {
-            resolveAll(i, promise);
-          }
-        }
-      });
-    }
-
-    __exports__.all = all;
-  });
-define("promise/asap", 
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    var browserGlobal = (typeof window !== 'undefined') ? window : {};
-    var BrowserMutationObserver = browserGlobal.MutationObserver || browserGlobal.WebKitMutationObserver;
-    var local = (typeof global !== 'undefined') ? global : this;
-
-    // node
-    function useNextTick() {
-      return function() {
-        process.nextTick(flush);
-      };
-    }
-
-    function useMutationObserver() {
-      var iterations = 0;
-      var observer = new BrowserMutationObserver(flush);
-      var node = document.createTextNode('');
-      observer.observe(node, { characterData: true });
-
-      return function() {
-        node.data = (iterations = ++iterations % 2);
-      };
-    }
-
-    function useSetTimeout() {
-      return function() {
-        local.setTimeout(flush, 1);
-      };
-    }
-
-    var queue = [];
-    function flush() {
-      for (var i = 0; i < queue.length; i++) {
-        var tuple = queue[i];
-        var callback = tuple[0], arg = tuple[1];
-        callback(arg);
-      }
-      queue = [];
-    }
-
-    var scheduleFlush;
-
-    // Decide what async method to use to triggering processing of queued callbacks:
-    if (typeof process !== 'undefined' && {}.toString.call(process) === '[object process]') {
-      scheduleFlush = useNextTick();
-    } else if (BrowserMutationObserver) {
-      scheduleFlush = useMutationObserver();
-    } else {
-      scheduleFlush = useSetTimeout();
-    }
-
-    function asap(callback, arg) {
-      var length = queue.push([callback, arg]);
-      if (length === 1) {
-        // If length is 1, that means that we need to schedule an async flush.
-        // If additional callbacks are queued before the queue is flushed, they
-        // will be processed by this flush that we are scheduling.
-        scheduleFlush();
-      }
-    }
-
-    __exports__.asap = asap;
-  });
-define("promise/cast", 
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    /**
-      `RSVP.Promise.cast` returns the same promise if that promise shares a constructor
-      with the promise being casted.
-
-      Example:
-
-      ```javascript
-      var promise = RSVP.resolve(1);
-      var casted = RSVP.Promise.cast(promise);
-
-      console.log(promise === casted); // true
-      ```
-
-      In the case of a promise whose constructor does not match, it is assimilated.
-      The resulting promise will fulfill or reject based on the outcome of the
-      promise being casted.
-
-      In the case of a non-promise, a promise which will fulfill with that value is
-      returned.
-
-      Example:
-
-      ```javascript
-      var value = 1; // could be a number, boolean, string, undefined...
-      var casted = RSVP.Promise.cast(value);
-
-      console.log(value === casted); // false
-      console.log(casted instanceof RSVP.Promise) // true
-
-      casted.then(function(val) {
-        val === value // => true
-      });
-      ```
-
-      `RSVP.Promise.cast` is similar to `RSVP.resolve`, but `RSVP.Promise.cast` differs in the
-      following ways:
-      * `RSVP.Promise.cast` serves as a memory-efficient way of getting a promise, when you
-      have something that could either be a promise or a value. RSVP.resolve
-      will have the same effect but will create a new promise wrapper if the
-      argument is a promise.
-      * `RSVP.Promise.cast` is a way of casting incoming thenables or promise subclasses to
-      promises of the exact class specified, so that the resulting object's `then` is
-      ensured to have the behavior of the constructor you are calling cast on (i.e., RSVP.Promise).
-
-      @method cast
-      @for RSVP
-      @param {Object} object to be casted
-      @return {Promise} promise that is fulfilled when all properties of `promises`
-      have been fulfilled, or rejected if any of them become rejected.
-    */
-
-
-    function cast(object) {
-      /*jshint validthis:true */
-      if (object && typeof object === 'object' && object.constructor === this) {
-        return object;
-      }
-
-      var Promise = this;
-
-      return new Promise(function(resolve) {
-        resolve(object);
-      });
-    }
-
-    __exports__.cast = cast;
-  });
-define("promise/config", 
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    var config = {
-      instrument: false
-    };
-
-    function configure(name, value) {
-      if (arguments.length === 2) {
-        config[name] = value;
-      } else {
-        return config[name];
-      }
-    }
-
-    __exports__.config = config;
-    __exports__.configure = configure;
-  });
-define("promise/polyfill", 
-  ["./promise","./utils","exports"],
-  function(__dependency1__, __dependency2__, __exports__) {
-    "use strict";
-    var RSVPPromise = __dependency1__.Promise;
-    var isFunction = __dependency2__.isFunction;
-
-    function polyfill() {
-      var es6PromiseSupport = 
-        "Promise" in window &&
-        // Some of these methods are missing from
-        // Firefox/Chrome experimental implementations
-        "cast" in window.Promise &&
-        "resolve" in window.Promise &&
-        "reject" in window.Promise &&
-        "all" in window.Promise &&
-        "race" in window.Promise &&
-        // Older version of the spec had a resolver object
-        // as the arg rather than a function
-        (function() {
-          var resolve;
-          new window.Promise(function(r) { resolve = r; });
-          return isFunction(resolve);
-        }());
-
-      if (!es6PromiseSupport) {
-        window.Promise = RSVPPromise;
-      }
-    }
-
-    __exports__.polyfill = polyfill;
-  });
-define("promise/promise", 
-  ["./config","./utils","./cast","./all","./race","./resolve","./reject","./asap","exports"],
-  function(__dependency1__, __dependency2__, __dependency3__, __dependency4__, __dependency5__, __dependency6__, __dependency7__, __dependency8__, __exports__) {
-    "use strict";
-    var config = __dependency1__.config;
-    var configure = __dependency1__.configure;
-    var objectOrFunction = __dependency2__.objectOrFunction;
-    var isFunction = __dependency2__.isFunction;
-    var now = __dependency2__.now;
-    var cast = __dependency3__.cast;
-    var all = __dependency4__.all;
-    var race = __dependency5__.race;
-    var staticResolve = __dependency6__.resolve;
-    var staticReject = __dependency7__.reject;
-    var asap = __dependency8__.asap;
-
-    var counter = 0;
-
-    config.async = asap; // default async is asap;
-
-    function Promise(resolver) {
-      if (!isFunction(resolver)) {
-        throw new TypeError('You must pass a resolver function as the first argument to the promise constructor');
-      }
-
-      if (!(this instanceof Promise)) {
-        throw new TypeError("Failed to construct 'Promise': Please use the 'new' operator, this object constructor cannot be called as a function.");
-      }
-
-      this._subscribers = [];
-
-      invokeResolver(resolver, this);
-    }
-
-    function invokeResolver(resolver, promise) {
-      function resolvePromise(value) {
-        resolve(promise, value);
-      }
-
-      function rejectPromise(reason) {
-        reject(promise, reason);
-      }
-
-      try {
-        resolver(resolvePromise, rejectPromise);
-      } catch(e) {
-        rejectPromise(e);
-      }
-    }
-
-    function invokeCallback(settled, promise, callback, detail) {
-      var hasCallback = isFunction(callback),
-          value, error, succeeded, failed;
-
-      if (hasCallback) {
-        try {
-          value = callback(detail);
-          succeeded = true;
-        } catch(e) {
-          failed = true;
-          error = e;
-        }
-      } else {
-        value = detail;
-        succeeded = true;
-      }
-
-      if (handleThenable(promise, value)) {
-        return;
-      } else if (hasCallback && succeeded) {
-        resolve(promise, value);
-      } else if (failed) {
-        reject(promise, error);
-      } else if (settled === FULFILLED) {
-        resolve(promise, value);
-      } else if (settled === REJECTED) {
-        reject(promise, value);
-      }
-    }
-
-    var PENDING   = void 0;
-    var SEALED    = 0;
-    var FULFILLED = 1;
-    var REJECTED  = 2;
-
-    function subscribe(parent, child, onFulfillment, onRejection) {
-      var subscribers = parent._subscribers;
-      var length = subscribers.length;
-
-      subscribers[length] = child;
-      subscribers[length + FULFILLED] = onFulfillment;
-      subscribers[length + REJECTED]  = onRejection;
-    }
-
-    function publish(promise, settled) {
-      var child, callback, subscribers = promise._subscribers, detail = promise._detail;
-
-      for (var i = 0; i < subscribers.length; i += 3) {
-        child = subscribers[i];
-        callback = subscribers[i + settled];
-
-        invokeCallback(settled, child, callback, detail);
-      }
-
-      promise._subscribers = null;
-    }
-
-    Promise.prototype = {
-      constructor: Promise,
-
-      _state: undefined,
-      _detail: undefined,
-      _subscribers: undefined,
-
-      then: function(onFulfillment, onRejection) {
-        var promise = this;
-
-        var thenPromise = new this.constructor(function() {});
-
-        if (this._state) {
-          var callbacks = arguments;
-          config.async(function invokePromiseCallback() {
-            invokeCallback(promise._state, thenPromise, callbacks[promise._state - 1], promise._detail);
-          });
-        } else {
-          subscribe(this, thenPromise, onFulfillment, onRejection);
-        }
-
-        return thenPromise;
+        last = item;
+        item = void 0;
       },
+      drain: function drain() {
+        var f = first;
+        first = last = cycle = null;
 
-      'catch': function(onRejection) {
-        return this.then(null, onRejection);
+        while (f) {
+          f.fn.call(f.self);
+          f = f.next;
+        }
       }
     };
+  }
 
-    Promise.all = all;
-    Promise.cast = cast;
-    Promise.race = race;
-    Promise.resolve = staticResolve;
-    Promise.reject = staticReject;
+  scheduling_queue = Queue();
 
-    function handleThenable(promise, value) {
-      var then = null,
-      resolved;
+  function schedule(fn,self) {
+    if (sync_schedule) {
+      sync_schedule = false;
+      fn.call(self);
+    }
+    else {
+      scheduling_queue.add(fn,self);
+      if (!cycle) {
+        cycle = timer(scheduling_queue.drain);
+      }
+    }
+  }
 
-      try {
-        if (promise === value) {
-          throw new TypeError("A promises callback cannot return that same promise.");
+  // promise duck typing?
+  function isThenable(o) {
+    var _then, o_type = typeof o;
+
+    if (o !== null &&
+      (
+        o_type === "object" || o_type === "function"
+      )
+    ) {
+      _then = o.then;
+    }
+    return typeof _then === "function" ? _then : false;
+  }
+
+  function notify() {
+    var self = this, cb, chain, i;
+
+    if (self.state === 0) {
+      return sync_schedule = false;
+    }
+
+    for (i=0; i<self.chain.length; i++) {
+      chain = self.chain[i];
+      cb = (self.state === 1) ? chain.success : chain.failure;
+      notifyIsolated(self,cb,chain);
+    }
+    self.chain.length = 0;
+  }
+
+  function notifyIsolated(self,cb,chain) {
+    var ret, _then;
+    try {
+      if (cb === false) {
+        sync_schedule = true;
+        chain.reject(self.msg);
+      }
+      else {
+        if (cb === true) ret = self.msg;
+        else ret = cb.call(void 0,self.msg);
+
+        sync_schedule = true;
+        if (ret === chain.promise) {
+          chain.reject(TypeError("Promise-chain cycle"));
+        }
+        else if ((_then = isThenable(ret))) {
+          _then.call(ret,chain.resolve,chain.reject);
+        }
+        else {
+          chain.resolve(ret);
+        }
+      }
+    }
+    catch (err) {
+      sync_schedule = true;
+      chain.reject(err);
+    }
+  }
+  function checkYourself(self) {
+    if (self.def) {
+      if (self.triggered) {
+        return sync_schedule = false;
+      }
+      self.triggered = true;
+      self = self.def;
+    }
+
+    if (self.state !== 0) {
+      return sync_schedule = false;
+    }
+
+    return self;
+  }
+
+  function resolve(msg) {
+    var _then, def_wrapper, self = checkYourself(this);
+
+    // self-check failed
+    if (self === false) { return; }
+
+    try {
+      if ((_then = isThenable(msg))) {
+        def_wrapper = new MakeDefWrapper(self);
+        _then.call(msg,
+          function $resolve$(){ resolve.apply(def_wrapper,arguments); },
+          function $reject$(){ reject.apply(def_wrapper,arguments); }
+        );
+      }
+      else {
+        self.msg = msg;
+        self.state = 1;
+        schedule(notify,self);
+      }
+    }
+    catch (err) {
+      reject.call(def_wrapper || (new MakeDefWrapper(self)),err);
+    }
+  }
+
+  function reject(msg) {
+    var self = checkYourself(this);
+
+    // self-check failed
+    if (self === false) { return; }
+
+    self.msg = msg;
+    self.state = 2;
+    schedule(notify,self);
+  }
+
+  function iteratePromises(Constructor,arr,resolver,rejecter) {
+    for (var idx=0; idx<arr.length; idx++) {
+      (function(idx){
+        Constructor.resolve(arr[idx])
+        .then(
+          function $resolver$(msg){
+            resolver(idx,msg);
+          },
+          rejecter
+        );
+      })(idx);
+    }
+  }
+
+  function MakeDefWrapper(self) {
+    this.def = self;
+    this.triggered = false;
+  }
+
+  function MakeDef(self) {
+    this.promise = self;
+    this.state = 0;
+    this.triggered = false;
+    this.chain = [];
+    this.msg = void 0;
+  }
+
+  function Promise(executor) {
+    if (typeof executor !== "function") {
+      throw TypeError("Not a function");
+    }
+
+    if (this.__NPO__ !== 0) {
+      throw TypeError("Not a promise");
+    }
+
+    // instance shadowing the inherited "brand"
+    // to signal an already "initialized" promise
+    this.__NPO__ = 1;
+
+    var self = this, def = new MakeDef(self);
+
+    self.then = function then(success,failure) {
+      var o = {
+        success: typeof success === "function" ? success : true,
+        failure: typeof failure === "function" ? failure : false
+      };
+      // Note: `then(..)` itself can be borrowed to be used against
+      // a different promise constructor for making the chained promise,
+      // by substituting a different `this` binding.
+      o.promise = new this.constructor(function extractChain(resolve,reject) {
+        if (typeof (resolve && reject) !== "function") {
+          throw TypeError("Not a function");
         }
 
-        if (objectOrFunction(value)) {
-          then = value.then;
+        o.resolve = resolve;
+        o.reject = reject;
+      });
+      def.chain.push(o);
 
-          if (isFunction(then)) {
-            then.call(value, function(val) {
-              if (resolved) { return true; }
-              resolved = true;
+      schedule(notify,def);
 
-              if (value !== val) {
-                resolve(promise, val);
-              } else {
-                fulfill(promise, val);
-              }
-            }, function(val) {
-              if (resolved) { return true; }
-              resolved = true;
+      return o.promise;
+    };
+    // `catch` not allowed as identifier in older JS engines
+    self["catch"] = function $catch$(failure) {
+      return def.promise.then.call(this,void 0,failure);
+    };
 
-              reject(promise, val);
-            });
-
-            return true;
+    try {
+      executor.call(
+        void 0,
+        function publicResolve(msg){
+          if (def.triggered) {
+            return void(sync_schedule = false);
           }
-        }
-      } catch (error) {
-        if (resolved) { return true; }
-        reject(promise, error);
-        return true;
-      }
+          def.triggered = true;
 
-      return false;
-    }
-
-    function resolve(promise, value) {
-      if (promise === value) {
-        fulfill(promise, value);
-      } else if (!handleThenable(promise, value)) {
-        fulfill(promise, value);
-      }
-    }
-
-    function fulfill(promise, value) {
-      if (promise._state !== PENDING) { return; }
-      promise._state = SEALED;
-      promise._detail = value;
-
-      config.async(publishFulfillment, promise);
-    }
-
-    function reject(promise, reason) {
-      if (promise._state !== PENDING) { return; }
-      promise._state = SEALED;
-      promise._detail = reason;
-
-      config.async(publishRejection, promise);
-    }
-
-    function publishFulfillment(promise) {
-      publish(promise, promise._state = FULFILLED);
-    }
-
-    function publishRejection(promise) {
-      publish(promise, promise._state = REJECTED);
-    }
-
-    __exports__.Promise = Promise;
-  });
-define("promise/race", 
-  ["./utils","exports"],
-  function(__dependency1__, __exports__) {
-    "use strict";
-    /* global toString */
-    var isArray = __dependency1__.isArray;
-
-    /**
-      `RSVP.race` allows you to watch a series of promises and act as soon as the
-      first promise given to the `promises` argument fulfills or rejects.
-
-      Example:
-
-      ```javascript
-      var promise1 = new RSVP.Promise(function(resolve, reject){
-        setTimeout(function(){
-          resolve("promise 1");
-        }, 200);
-      });
-
-      var promise2 = new RSVP.Promise(function(resolve, reject){
-        setTimeout(function(){
-          resolve("promise 2");
-        }, 100);
-      });
-
-      RSVP.race([promise1, promise2]).then(function(result){
-        // result === "promise 2" because it was resolved before promise1
-        // was resolved.
-      });
-      ```
-
-      `RSVP.race` is deterministic in that only the state of the first completed
-      promise matters. For example, even if other promises given to the `promises`
-      array argument are resolved, but the first completed promise has become
-      rejected before the other promises became fulfilled, the returned promise
-      will become rejected:
-
-      ```javascript
-      var promise1 = new RSVP.Promise(function(resolve, reject){
-        setTimeout(function(){
-          resolve("promise 1");
-        }, 200);
-      });
-
-      var promise2 = new RSVP.Promise(function(resolve, reject){
-        setTimeout(function(){
-          reject(new Error("promise 2"));
-        }, 100);
-      });
-
-      RSVP.race([promise1, promise2]).then(function(result){
-        // Code here never runs because there are rejected promises!
-      }, function(reason){
-        // reason.message === "promise2" because promise 2 became rejected before
-        // promise 1 became fulfilled
-      });
-      ```
-
-      @method race
-      @for RSVP
-      @param {Array} promises array of promises to observe
-      @param {String} label optional string for describing the promise returned.
-      Useful for tooling.
-      @return {Promise} a promise that becomes fulfilled with the value the first
-      completed promises is resolved with if the first completed promise was
-      fulfilled, or rejected with the reason that the first completed promise
-      was rejected with.
-    */
-    function race(promises) {
-      /*jshint validthis:true */
-      var Promise = this;
-
-      if (!isArray(promises)) {
-        throw new TypeError('You must pass an array to race.');
-      }
-      return new Promise(function(resolve, reject) {
-        var results = [], promise;
-
-        for (var i = 0; i < promises.length; i++) {
-          promise = promises[i];
-
-          if (promise && typeof promise.then === 'function') {
-            promise.then(resolve, reject);
-          } else {
-            resolve(promise);
+          resolve.call(def,msg);
+        },
+        function publicReject(msg) {
+          if (def.triggered) {
+            return void(sync_schedule = false);
           }
+          def.triggered = true;
+
+          reject.call(def,msg);
         }
-      });
+      );
+    }
+    catch (err) {
+      reject.call(def,err);
+    }
+  }
+
+  var PromisePrototype = builtInProp({},"constructor",Promise,
+    /*configurable=*/false
+  );
+
+  builtInProp(
+    Promise,"prototype",PromisePrototype,
+    /*configurable=*/false
+  );
+
+  // built-in "brand" to signal an "uninitialized" promise
+  builtInProp(PromisePrototype,"__NPO__",0,
+    /*configurable=*/false
+  );
+
+  builtInProp(Promise,"resolve",function Promise$resolve(msg) {
+    var Constructor = this;
+
+    // spec mandated checks
+    // note: best "isPromise" check that's practical for now
+    if (typeof msg === "object" && "__NPO__" in msg) {
+      return msg;
     }
 
-    __exports__.race = race;
+    return new Constructor(function executor(resolve,reject){
+      if (typeof (resolve && reject) !== "function") {
+        throw TypeError("Not a function");
+      }
+
+      schedule(function immediateResolve(){
+        sync_schedule = true;
+        resolve(msg);
+      });
+    });
   });
-define("promise/reject", 
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    /**
-      `RSVP.reject` returns a promise that will become rejected with the passed
-      `reason`. `RSVP.reject` is essentially shorthand for the following:
 
-      ```javascript
-      var promise = new RSVP.Promise(function(resolve, reject){
-        reject(new Error('WHOOPS'));
-      });
+  builtInProp(Promise,"reject",function Promise$reject(msg) {
+    return new this(function executor(resolve,reject){
+      if (typeof (resolve && reject) !== "function") {
+        throw TypeError("Not a function");
+      }
 
-      promise.then(function(value){
-        // Code here doesn't run because the promise is rejected!
-      }, function(reason){
-        // reason.message === 'WHOOPS'
-      });
-      ```
-
-      Instead of writing the above, your code now simply becomes the following:
-
-      ```javascript
-      var promise = RSVP.reject(new Error('WHOOPS'));
-
-      promise.then(function(value){
-        // Code here doesn't run because the promise is rejected!
-      }, function(reason){
-        // reason.message === 'WHOOPS'
-      });
-      ```
-
-      @method reject
-      @for RSVP
-      @param {Any} reason value that the returned promise will be rejected with.
-      @param {String} label optional string for identifying the returned promise.
-      Useful for tooling.
-      @return {Promise} a promise that will become rejected with the given
-      `reason`.
-    */
-    function reject(reason) {
-      /*jshint validthis:true */
-      var Promise = this;
-
-      return new Promise(function (resolve, reject) {
-        reject(reason);
-      });
-    }
-
-    __exports__.reject = reject;
+      reject(msg);
+    });
   });
-define("promise/resolve", 
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    /**
-      `RSVP.resolve` returns a promise that will become fulfilled with the passed
-      `value`. `RSVP.resolve` is essentially shorthand for the following:
 
-      ```javascript
-      var promise = new RSVP.Promise(function(resolve, reject){
-        resolve(1);
-      });
+  builtInProp(Promise,"all",function Promise$all(arr) {
+    var Constructor = this;
 
-      promise.then(function(value){
-        // value === 1
-      });
-      ```
-
-      Instead of writing the above, your code now simply becomes the following:
-
-      ```javascript
-      var promise = RSVP.resolve(1);
-
-      promise.then(function(value){
-        // value === 1
-      });
-      ```
-
-      @method resolve
-      @for RSVP
-      @param {Any} value value that the returned promise will be resolved with
-      @param {String} label optional string for identifying the returned promise.
-      Useful for tooling.
-      @return {Promise} a promise that will become fulfilled with the given
-      `value`
-    */
-    function resolve(value) {
-      /*jshint validthis:true */
-      var Promise = this;
-      return new Promise(function(resolve, reject) {
-        resolve(value);
-      });
+    // spec mandated checks
+    if (!Array.isArray(arr)) {
+      return Constructor.reject(TypeError("Not an array"));
+    }
+    if (arr.length === 0) {
+      return Constructor.resolve([]);
     }
 
-    __exports__.resolve = resolve;
+    return new Constructor(function executor(resolve,reject){
+      if (typeof (resolve && reject) !== "function") {
+        throw TypeError("Not a function");
+      }
+
+      var len = arr.length, msgs = Array(len), count = 0;
+
+      iteratePromises(Constructor,arr,function resolver(idx,msg) {
+        msgs[idx] = msg;
+        if (++count === len) {
+          resolve(msgs);
+        }
+      },reject);
+    });
   });
-define("promise/utils", 
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    function objectOrFunction(x) {
-      return isFunction(x) || (typeof x === "object" && x !== null);
+
+  builtInProp(Promise,"race",function Promise$race(arr) {
+    var Constructor = this;
+
+    // spec mandated checks
+    if (!Array.isArray(arr)) {
+      return Constructor.reject(TypeError("Not an array"));
     }
 
-    function isFunction(x) {
-      return typeof x === "function";
-    }
+    return new Constructor(function executor(resolve,reject){
+      if (typeof (resolve && reject) !== "function") {
+        throw TypeError("Not a function");
+      }
 
-    function isArray(x) {
-      return Object.prototype.toString.call(x) === "[object Array]";
-    }
-
-    // Date.now is not available in browsers < IE9
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/now#Compatibility
-    var now = Date.now || function() { return new Date().getTime(); };
-
-
-    __exports__.objectOrFunction = objectOrFunction;
-    __exports__.isFunction = isFunction;
-    __exports__.isArray = isArray;
-    __exports__.now = now;
+      iteratePromises(Constructor,arr,function resolver(idx,msg){
+        resolve(msg);
+      },reject);
+    });
   });
-requireModule('promise/polyfill').polyfill();
-}());/* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
+
+  return Promise;
+});/* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 
 ;(function(window, undefined) {
@@ -1466,6 +1061,37 @@ requireModule('promise/polyfill').polyfill();
       }
     }
   };
+
+  // need logger api
+  // var logger = new Sync.Logger('loggerName');
+  // logger.log('my log..') ->
+  //   [loggerName]: my log..
+
+  var logging = [];
+
+  Sync.Logger = function(name) {
+    this.name = name;
+  };
+
+  Sync.Logger.prototype = {
+    log: function() {
+      var args = slice.call(arguments);
+      args.unshift('[' + this.name + ']');
+      Sync.log.apply(null, args);
+    }
+  };
+
+  Sync.log = function syncLog() {
+    var log = slice.call(arguments);
+
+    if (Sync.debug) {
+      window.console.log.apply(window.console, log);
+    }
+
+    logging.push(log.join(' '));
+  };
+
+  Sync.logging = logging;
 }(this));
 /* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
@@ -2447,42 +2073,50 @@ requireModule('promise/polyfill').polyfill();
         }
       },
       shadowEventProp: function(e, key, val) {
-        try {
-          e[key] = val;
-        } catch (err) {};
-        
-        if (e[key] !== val) {
-          // try to change property if configurable
-          // in Chrome should change getter instead of value
+        var shadow = function(val, key) {
           try {
-            Object.defineProperty(e, key, {
-              get: function() {
-                return val;
-              }
-            });
-          } catch (err) {
-            var protoEvent = e;
+            e[key] = val;
+          } catch (err) {};
+          
+          if (e[key] !== val) {
+            // try to change property if configurable
+            // in Chrome should change getter instead of value
+            try {
+              Object.defineProperty(e, key, {
+                get: function() {
+                  return val;
+                }
+              });
+            } catch (err) {
+              var protoEvent = e;
 
-            e = Object.create(e/*, {
-              [key]: {
+              e = Object.create(e/*, {
+                [key]: {
+                  value: val
+                }
+              }*/);
+
+              Object.defineProperty(e, key, {
                 value: val
-              }
-            }*/);
+              });
 
-            Object.defineProperty(e, key, {
-              value: val
-            });
-
-            [
-              'preventDefault',
-              'stopPropagation',
-              'stopImmediatePropagation'
-            ].forEach(function(key) {
-              e[key] = function() {
-                protoEvent[key]()
-              };
-            });
+              [
+                'preventDefault',
+                'stopPropagation',
+                'stopImmediatePropagation'
+              ].forEach(function(key) {
+                e[key] = function() {
+                  protoEvent[key]()
+                };
+              });
+            }
           }
+        };
+
+        if (Sync.isObject(key)) {
+          Sync.each(key, shadow);
+        } else {
+          shadow(val, key);
         }
 
         return e;
@@ -2550,6 +2184,8 @@ requireModule('promise/polyfill').polyfill();
     
       if (inter) {
         var localDesc = desc || Object.getOwnPropertyDescriptor(inter, method);
+
+        // console.log(inter, method, value);
 
         Object.defineProperty(inter, method, {
           value: value,
@@ -2621,6 +2257,14 @@ requireModule('promise/polyfill').polyfill();
       return getETCustom(_interface, prop);
     }
   };
+
+  events.setET = setET;
+  events.getET = getET;
+  events.setETCustom = setETCustom;
+  events.getETCustom = getETCustom;
+  events.setDOMET = setDOMET;
+  events.getDOMET = getDOMET;
+  events.setSeparateDOMET = setSeparateDOMET;
 
   window.EventTarget && (function() {
     var add = EventTarget.prototype.addEventListener,
@@ -3039,8 +2683,9 @@ requireModule('promise/polyfill').polyfill();
   // or shadow them on devices with touch because
   // native enter/leave are broken in Chrome ...
   // ... and we cannot detect that
-  bindEnterLeave: if (!('onmouseenter' in document.createElement('div')) || hasTouch) {
-    // break bindEnterLeave;
+  bindEnterLeave: if (!('onmouseenter' in document.createElement('div'))/* || hasTouch*/) {
+    // hasTouch should be changed to isChromeAndroid
+    break bindEnterLeave;
 
     Sync.each({
       mouseenter: 'mouseover',
@@ -3064,6 +2709,8 @@ requireModule('promise/polyfill').polyfill();
                     type: 'MouseEvent',
                     options: e
                   });
+
+                  // console.log(originalEventKeyHook, originalHookKeyHook);
 
                   if (!relatedTarget || (target !== relatedTarget &&
                        !target.contains(relatedTarget))) {
@@ -3101,6 +2748,7 @@ requireModule('promise/polyfill').polyfill();
 
         return {
           addEventListener: function(event, callback, capture) {
+            // console.log('add mouseout/over', event);
             events.addEvent(this, originalEventKeyHook, {
               handler: function(e) {
                 e = events.shadowEventProp(e, 'type', event);
@@ -3127,9 +2775,10 @@ requireModule('promise/polyfill').polyfill();
       events.syncEvent(hook, function(synced) {
         return {
           addEventListener: function(hook, callback, capture) {
+            // console.log('add mouseleave/enter', hook);
             events.addEvent(this, originalHookKeyHook, {
               handler: function(e) {
-                e = events.shadowEventProp(e, 'type', event);
+                e = events.shadowEventProp(e, 'type', hook);
                 callback.call(this, e);
               },
               callback: callback,
@@ -3237,1837 +2886,7 @@ requireModule('promise/polyfill').polyfill();
   });
 
   Sync.events = events;
-}(this, this.document, Sync));;(function(Sync) {
-  var navigator = window.navigator,
-    pointers = {};
-  
-  Sync.pointers = pointers;
-
-  if (window.PointerEvent) return;
-
-  var events = Sync.events,
-    natives = events.natives,
-    hasOwn = Object.prototype.hasOwnProperty,
-    slice = Array.prototype.slice,
-    pow = Math.pow,
-    abs = Math.abs,
-    activePointers = {},
-    uidInc = 0,
-    hasTouch = 'ontouchstart' in document,
-    ua = navigator.userAgent.toLowerCase(),
-    isV8 = !!(window.v8Intl || (window.Intl && Intl.v8BreakIterator)),
-    isGecko = (navigator.product || '').toLowerCase() === 'gecko',
-    isAndroidStock = 'isApplicationInstalled' in navigator,
-    isChrome = !!window.chrome && !isAndroidStock,
-    isFx = isGecko && !!navigator.mozApps,
-    isAndroidFx = isFx && (navigator.appVersion || '')
-      .toLowerCase().indexOf('android') !== -1,
-    // need to check chrome not by UserAgent
-    // chrome for android has not plugins and extensions
-    // but on desktop plugins also might be disabled
-    // so we need to check by the ability to install extensions
-    isChromeAndroid = isChrome &&
-      ('startActivity' in navigator || !chrome.webstore),
-    isAndroid = isAndroidStock || isChromeAndroid || isAndroidFx ||
-      (!isAndroidStock && !isChromeAndroid && !isAndroidFx) && 
-        ua.indexOf('android') !== -1,
-    isIOS = !isAndroid &&
-      hasOwn.call(navigator, 'standalone') && !!window.getSearchEngine/*,
-    isBadTargetIOS = isIOS && /OS ([6-9]|\d{2})_\d/.test(navigator.userAgent)*/,
-
-    // 32+
-    isChromeBelow31 = isChrome && 'vibrate' in navigator &&
-      'getContextAttributes' in document.createElement('canvas').getContext('2d'),
-    isBB10 = navigator.platform.toLowerCase() === 'blackberry' &&
-      (navigator.vendor || '').toLowerCase().indexOf('research in motion') !== -1;
-
-  console.log(JSON.stringify({
-    isV8: isV8,
-    isAndroid: isAndroid,
-    isChrome: isChrome,
-    isChromeAndroid: isChromeAndroid,
-    isAndroidStock: isAndroidStock,
-    isFx: isFx,
-    isAndroidFx: isAndroidFx
-  }));
-
-  // chrome 18 window.Intent
-  // chrome 18 navigator.startActivity
-  // chrome 18 chrome.appNotifications
-  // chrome 18 chrome.setSuggestResult
-  // chrome 18 chrome.searchBox
-  // chrome 18 chrome.webstore
-  // chrome 18 chrome.app
-
-  // android stock chrome.searchBox
-  // android stock navigator.isApplicationInstalled
-  // android stock navigator.connection
-
-  // chrome android latest inc isV8
-
-  // chrome desktop chrome.app
-  // chrome desktop chrome.webstore
-  // inc isV8
-
-  var FAKE_PREFIX = 'fake_',
-    MOUSE_PREFIX = 'mouse',
-    POINTER_PREFIX = 'pointer',
-    TOUCH_PREFIX = 'touch',
-    NS_MOUSE_POINTER = 'mouse_pointer',
-    NS_TOUCH_POINTER = 'touch_pointer',
-    DEVICE_LISTENERS_KEY = 'device_listeners_key',
-    POINTER_DEFAULTS = {
-      pointerId: 0,
-      width: 0,
-      height: 0,
-      pressure: 0,
-      tiltX: 0,
-      tiltY: 0,
-      pointerType: '',
-      isPrimary: false
-    },
-    MOUSE_EVENT_INIT = {
-      bubbles: false,
-      cancelable: false,
-      view: null,
-      detail: 0,
-      screenX: 0,
-      screenY: 0,
-      clientX: 0,
-      clientY: 0,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-      button: 0,
-      buttons: 0,
-      relatedTarget: null
-    },
-    POINTER_FIELDS = Object.keys(POINTER_DEFAULTS);
-
-  [
-    'down',
-    'up',
-    'move',
-    'over',
-    'out',
-    'enter',
-    'leave',
-    'cancel'
-  ].forEach(function(event) {
-    var full = POINTER_PREFIX + event;
-
-    events.syncEvent(full, function(synced) {
-      return {
-        addEventListener: function(type, callback, capture) {
-          triggerDeviceListeners(this, event/*, capture*/);
-
-          events.addEvent(this, full, {
-            handler: callback,
-            callback: callback,
-            capture: capture,
-            method: synced.addEventListener
-          });
-        },
-        removeEventListener: function(type, callback, capture) {
-          muteDeviceListeners(this, event/*, capture*/);
-
-          events.addEvent(this, full, {
-            callback: callback,
-            capture: capture,
-            method: synced.removeEventListener
-          });
-        }
-      }
-    });
-  });
-
-  // MSPointer type
-
-  if (window.MSPointerEvent) return (function() {
-    var msBindings = {
-      down: function() {},
-      up: function() {},
-      move: function() {},
-      over: function() {},
-      out: function() {},
-      enter: function() {},
-      leave: function() {},
-      cancel: function() {}
-    }, msDevices = {};
-
-    window.PointerEvent = function(type, options) {
-      var event = document.createEvent('MSPointerEvent');
-
-      event.initPointerEvent(
-        type,
-        options.bubbles,
-        options.cancelable,
-        options.view,
-        options.detail,
-        options.screenX,
-        options.screenY,
-        options.clientX,
-        options.clientY,
-        options.ctrlKey,
-        options.altKey,
-        options.shiftKey,
-        options.metaKey,
-        options.button,
-        options.relatedTarget,
-        options.offsetX,
-        options.offsetY,
-        options.width,
-        options.height,
-        options.pressure,
-        options.rotation,
-        options.tiltX,
-        options.tiltY,
-        options.pointerId,
-        options.pointerType,
-        options.hwTimestamp,
-        options.isPrimary
-      );
-
-      return event;
-    };
-
-    triggerDeviceListeners = function(node, event) {
-
-    };
-
-    muteDeviceListeners = function(node, event) {
-
-    };
-  }());
-
-  var devices = {};
-  
-  var triggerDeviceListeners = function(node, event,/* capture,*/ deviceType) {
-    // if (!devices.length) return;
-
-    Object.keys(devices).forEach(function(device) {
-      if (deviceType && deviceType !== device) return;
-
-      var type = DEVICE_LISTENERS_KEY + device + event;
-
-      device = devices[device];
-
-      Sync.events.handleOnce(node, type, function() {
-        device.bindListener(node, event/*, capture*/);
-      });
-
-      /*var cached = Sync.cache(node, DEVICE_LISTENERS_KEY),
-        type = device.type + event,
-        listeners = cached[type] | 0;
-
-      if (!listeners) {
-        device.bindListener(node, event, capture);
-      }
-
-      cached[type] = ++listeners;*/
-    });
-  },
-  muteDeviceListeners = function(node, event,/* capture,*/ deviceType) {
-    // if (!devices.length) return;
-
-    Object.keys(devices).forEach(function(device) {
-      if (deviceType && deviceType !== device) return;
-
-      var type = DEVICE_LISTENERS_KEY + device + event;
-
-      device = devices[device];
-
-      Sync.events.handleIfLast(node, type, function() {
-        device.unbindListener(node, event/*, capture*/);
-      });
-
-      /*var cached = Sync.cache(node, DEVICE_LISTENERS_KEY),
-        type = device.type + event,
-        listeners = cached[type] | 0;
-
-      if (listeners) {
-        cached[type] = --listeners;
-
-        if (!listeners) {
-          device.unbindListener(node, event, capture);
-        }
-      }*/
-    });
-  },
-  shadowEventType = function(e, type) {
-    try {
-      e.type = type;
-    } catch (err) {};
-    
-    if (e.type !== type) {
-      // try to change property if configurable
-      // in Chrome should change getter instead of value
-      try {
-        Object.defineProperty(e, 'type', {
-          get: function() {
-            return type;
-          }
-        });
-      } catch (err) {
-        var protoEvent = e;
-
-        e = Object.create(e, {
-          type: {
-            value: type
-          }
-        });
-
-        [
-          'preventDefault',
-          'stopPropagation',
-          'stopImmediatePropagation'
-        ].forEach(function(key) {
-          e[key] = function() {
-            protoEvent[key]()
-          };
-        });
-      }
-    }
-
-    return e;
-  },
-  syncEvent = function(deviceNatives, full, event, device) {
-    events.syncEvent(full, function(synced) {
-      deviceNatives[full] = synced;
-
-      return {
-        addEventListener: function(type, callback, capture) {
-          if (event && device) {
-            triggerDeviceListeners(this, event,/* capture,*/ device);
-          }
-
-          events.addEvent(this, FAKE_PREFIX + full, {
-            handler: function(e) {
-              // e = Sync.extend({}, e);
-              e = shadowEventType(e, type);
-
-              // console.log('type: ' + e.type);
-              callback.call(this, e);
-            },
-            callback: callback,
-            capture: capture,
-            method: synced.addEventListener
-          });
-        },
-        removeEventListener: function(type, callback, capture) {
-          if (event && device) {
-            muteDeviceListeners(this, event,/* capture,*/ device);
-          }
-
-          events.addEvent(this, FAKE_PREFIX + full, {
-            callback: callback,
-            capture: capture,
-            method: synced.removeEventListener
-          });
-        }
-      }
-    });
-  },
-  debunce = function(fn, time, callFirst) {
-    var lastCall;
-
-    return function(arg) {
-      var needCall;
-
-      if (!lastCall && callFirst !== false) {
-        needCall = true;
-      }
-
-      if (lastCall) {
-        var now = Date.now();
-
-        if (now - lastCall > time) {
-          needCall = true;
-        }
-      }
-
-      lastCall = Date.now();
-
-      if (needCall) {
-        var len = arguments.length;
-
-        if (len <= 1) {
-          return fn.call(this, arg);
-        } else {
-          return fn.apply(this, arguments);
-        }
-      }
-    };
-  };
-
-  window.PointerEvent = function(type, options) {
-    var event = new window.MouseEvent(type, options);
-
-    POINTER_FIELDS.forEach(function(field) {
-      if (!hasOwn.call(event, field)) {
-        event[field] = hasOwn.call(options, field) ?
-          options[field] : POINTER_DEFAULTS[field];
-      }
-    });
-
-    return event;
-  };
-
-  pointers.getDevice = function(type) {
-    return devices[type] || null;
-  };
-
-  pointers.Device = function(type) {
-    this.type = type;
-    this.pointers = [];
-    this.counter = 0;
-
-    // spec is not clear about canceling all device or pointer
-    // it says:
-    // cancel all events of type;
-    // so that is a device
-    this.mouseEventsPrevented = false;
-
-    if (hasOwn.call(devices, type)) throw new Error();
-
-    devices[type] = this;
-  };
-
-  pointers.Device.prototype = {
-    createPointer: function() {
-      var pointer = new pointers.Pointer(this);
-
-      return pointer;
-    },
-    getNextId: function() {
-      if (this.counter >= Number.MAX_VALUE) {
-        return (this.counter = 0);
-      }
-
-      return this.counter++;
-    },
-    isPrimaryPointer: function(pointer) {
-      return this.pointers[0] === pointer;
-    },
-    addPointer: function(pointer) {
-      this.pointers.push(pointer);
-    },
-    removePointer: function(pointer) {
-      var devicePointers = this.pointers,
-        index = devicePointers.indexOf(pointer);
-
-      if (index !== -1) {
-        devicePointers.splice(index, 1);
-      }
-    },
-    get primary() {
-      return this.pointers[0] || null;
-    }
-  };
-
-  pointers.Pointer = function(device) {
-    this.device = device;
-    this.id = device.getNextId();
-    this.type = device.type;
-    this.buttons = 0;
-
-    device.addPointer(this);
-  };
-
-  pointers.Pointer.prototype = {
-    get isPrimary() {
-      return this.device.isPrimaryPointer(this);
-    },
-    get button() {
-      var buttons = this.buttons,
-        lastButtons = this._lastButtons,
-        lastButton = this._lastButton,
-        button;
-
-      if (lastButtons === buttons) {
-        return lastButton;
-      }
-
-      if (!buttons) {
-        button = -1;
-      } else if (buttons === 4) {
-        button = 1;
-      } else if (buttons === 2) {
-        button = 2;
-      } else {
-        button = Math.log(buttons) / Math.log(2);
-      }
-
-      this._lastButton = button;
-      this._lastButtons = buttons;
-
-      return button;
-    },
-    destroy: function() {
-      this.device.removePointer(this);
-    },
-    initEventDict: function(options) {
-      var dict,
-        buttons = this.buttons,
-        button = this.button;
-
-      options || (options = {});
-
-      dict = {
-        pointerId: this.id,
-        pointerType: this.type,
-        isPrimary: this.isPrimary,
-        buttons: buttons,
-        button: button
-      };
-
-      // options
-      [
-        'width',
-        'height',
-        'pressure',
-        'tiltX',
-        'tiltY',
-        'cancelable',
-        'bubbles'
-      ].forEach(function(key) {
-        if (key in options) {
-          dict[key] = options[key]
-        } else if (hasOwn.call(POINTER_DEFAULTS, key)) {
-          dict[key] = POINTER_DEFAULTS[key]
-        }
-      });
-
-      return dict;
-    },
-    dispatchEvent: function(node, event, mouseEventDict, options) {
-      // Object.keys is not the keys there
-      // properties of event are stored in the prototype
-      // Sync.extend is backed by the Object.keys
-      // so we use the for in loop instead
-      // var dict = Sync.extend({}, mouseEventDict, this.initEventDict());
-      // delete dict.type;
-
-      var dict = {};
-
-      Object.keys(MOUSE_EVENT_INIT).forEach(function(prop) {
-        if (hasOwn.call(mouseEventDict, prop)) {
-          dict[prop] = mouseEventDict[prop];
-        }
-      });
-
-      if (!dict.view) {
-        dict.view = node.defaultView;
-      }
-
-      // console.log(Sync.extend({}, options));
-      options = this.initEventDict(options);
-
-      Sync.extend(dict, options);
-
-      return events.dispatchEvent(node, POINTER_PREFIX + event, {
-        type: 'PointerEvent',
-        options: dict
-      });
-    }
-  };
-
-  // ###################
-
-  var mayNeedFastClick = (function() {
-    var metaViewport = document.querySelector('meta[name="viewport"]');
-
-    if (metaViewport) {
-      // Chrome on Android with user-scalable="no" doesn't need FastClick (issue #89)
-      if ((isChromeAndroid || isBB10) &&
-          metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1) {
-        return false;
-      }
-
-      // Chrome 32 and above with width=device-width or less don't need FastClick
-      if (isChromeAndroid && isChromeBelow31 &&
-          window.innerWidth <= window.screen.width) {
-        return false;
-      }
-    }
-
-    return true;
-  }());
-
-  // mouse type
-
-  (function() {
-    var mouseDevice = new pointers.Device('mouse'),
-      mousePointer = mouseDevice.createPointer(),
-      mouseNatives = {},
-      mouseBindings = {
-        down: function(e, type, event) {
-          var pointerFire = !mousePointer.buttons;
-
-          if ('buttons' in e) {
-            mousePointer.buttons = e.buttons;
-          } else {
-            // hook MouseEvent buttons to pointer buttons here
-            mousePointer.buttons += pow(2, e.button);
-          }
-
-          if (pointerFire) {
-            // fire pointer down here
-            
-            var canceled = !mousePointer.dispatchEvent(
-              e.target, type, e, {
-                bubbles: true,
-                cancelable: true
-              });
-
-            if (canceled) {
-              mouseDevice.mouseEventsPrevented = true;
-              e.preventDefault();
-              return;
-            }
-          }
-
-          var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-            type: 'MouseEvent',
-            options: e
-          });
-
-          if (canceled) {
-            e.preventDefault();
-          }
-        },
-        up: function(e, type, event) {
-          if (!mousePointer.buttons) return;
-
-          if ('buttons' in e) {
-            mousePointer.buttons = e.buttons;
-          } else {
-            // hook MouseEvent buttons to pointer buttons here
-            // console.log(mousePointer.buttons, Math.pow(2, e.button))
-            mousePointer.buttons -= Math.pow(2, e.button);
-          }
-
-          if (!mousePointer.buttons) {
-            // fire pointer up here
-            var canceled = !mousePointer
-              .dispatchEvent(e.target, type, e, {
-                bubbles: true,
-                cancelable: true
-              });
-          }
-
-          if (!mouseDevice.mouseEventsPrevented) {
-            var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-              type: 'MouseEvent',
-              options: e
-            });
-          }
-
-          if (canceled) {
-            e.preventDefault();
-          }
-
-          mouseDevice.mouseEventsPrevented = false;
-        },
-        cancel: function(e, type, event) {
-          var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-            type: 'MouseEvent',
-            options: e
-          });
-
-          if (canceled) {
-            e.preventDefault();
-            return;
-          }
-
-          mousePointer.dispatchEvent(e.target, type, e, {
-            bubbles: true,
-            cancelable: false
-          });
-
-          mousePointer.buttons = 0;
-          mouseDevice.mouseEventsPrevented = false;
-        },
-        move: function(e, type, event) {
-          var canceled = !mousePointer
-            .dispatchEvent(e.target, type, e, {
-              bubbles: true,
-              cancelable: true
-            });
-
-          if (!mouseDevice.mouseEventsPrevented) {
-            var canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-              type: 'MouseEvent',
-              options: e
-            });
-          }
-
-          if (canceled) {
-            e.preventDefault();
-          }
-        }
-      };
-
-    ['over', 'out', 'enter', 'leave'].forEach(function(type) {
-      mouseBindings[type] = function(e, type, event) {
-        var option = type === 'over' || type === 'out';
-
-        var canceled = !mousePointer.dispatchEvent(
-          e.target, type, e, {
-            bubbles: option,
-            cancelable: option
-          });
-
-        canceled || (canceled = !events.dispatchEvent(e.target, FAKE_PREFIX + event, {
-          type: 'MouseEvent',
-          options: e
-        }));
-
-        if (canceled) {
-          e.preventDefault();
-        }
-      }
-    });
-
-    mouseDevice.bindListener = function(node, event/*, capture*/) {
-      if (isIOS && hasTouch) return;
-
-      var type = MOUSE_PREFIX + event,
-        callback = mouseBindings[event];
-
-      if (event === 'cancel') {
-        type = 'contextmenu';
-      }
-
-      events.addEvent(node, type, {
-        handler: function(e) {
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-
-          // console.log(event, type);
-
-          var isCompatibility = checkForCompatibility(this, e, event, type);
-
-          if (!isCompatibility) {
-            callback.call(this, e, event, type);
-          }
-        },
-        callback: callback,
-        capture: /*capture*/ true,
-        method: mouseNatives[type].addEventListener,
-        namespace: NS_MOUSE_POINTER
-      });
-    };
-
-    mouseDevice.unbindListener = function(node, event/*, capture*/) {
-      if (isIOS && hasTouch) return;
-
-      var type = MOUSE_PREFIX + event,
-        callback = mouseBindings[event];
-
-      if (event === 'cancel') {
-        type = 'contextmenu';
-      }
-
-      events.removeEvent(node, type, {
-        callback: callback,
-        capture: /*capture*/ true,
-        method: mouseNatives[type].removeEventListener,
-        namespace: NS_MOUSE_POINTER
-      });
-    };
-
-    var checkForCompatibility = function(node, e, event, type) {
-      if (!(touchDevice = pointers.getDevice('touch'))) return;
-
-      var touchData = touchDevice.currentPrimaryTouch,
-        prevTouchData = touchDevice.prevPrimaryTouch,
-        touchDevice;
-
-      if (touchData && touchData.moved && isAndroid) return;
-
-      // console.log('prev:', e.target, prevTouchData && prevTouchData.startTouch.target);
-
-      if ((event === 'out' || event === 'leave') && (prevTouchData &&
-        prevTouchData.startTouch.target === e.target)) {
-        return true;
-      }
-
-      if (touchData) {
-        var touch = touchData.startTouch,
-          xMin = touch.clientX - 10,
-          xMax = touch.clientX + 10,
-          yMin = touch.clientY - 10,
-          yMax = touch.clientY + 10;
-
-        // console.log('checked:', [e.clientX, e.clientY], [touch.clientX, touch.clientY],
-        //   (xMin < e.clientX && xMax > e.clientX &&
-        //   yMin < e.clientY && yMax > e.clientY));
-
-        if (touch.target === e.target &&
-          xMin < e.clientX && xMax > e.clientX &&
-          yMin < e.clientY && yMax > e.clientY) {
-          return true;
-        }
-      }
-    };
-
-    var syncMouseEvents = function(deviceNatives, full, event) {
-      events.syncEvent(full, function(synced) {
-        deviceNatives[full] = synced;
-
-        return {
-          addEventListener: function(type, callback, capture) {
-            if (event) {
-              triggerDeviceListeners(this, event,/* capture,*/ 'mouse');
-
-              if (hasTouch) {
-                triggerDeviceListeners(this, event,/* capture,*/ 'touch');
-              }
-            }
-
-            events.addEvent(this, FAKE_PREFIX + full, {
-              handler: function(e) {
-                // e = Sync.extend({}, e);
-                e = shadowEventType(e, type);
-
-                // console.log('type: ' + e.type);
-                callback.call(this, e);
-              },
-              callback: callback,
-              capture: capture,
-              method: synced.addEventListener
-            });
-          },
-          removeEventListener: function(type, callback, capture) {
-            if (event) {
-              muteDeviceListeners(this, event,/* capture,*/ 'mouse');
-
-              if (hasTouch) {
-                muteDeviceListeners(this, event,/* capture,*/ 'touch');
-              }
-            }
-
-            events.addEvent(this, FAKE_PREFIX + full, {
-              callback: callback,
-              capture: capture,
-              method: synced.removeEventListener
-            });
-          }
-        }
-      });
-    };
-
-    syncMouseEvents(mouseNatives, 'contextmenu', 'cancel');
-
-    // create fake mouse event
-    [
-      'down',
-      'up',
-      'move',
-      'over',
-      'out',
-      'enter',
-      'leave'
-    ].forEach(function(event) {
-      var full = MOUSE_PREFIX + event;
-
-      syncMouseEvents(mouseNatives, full, event);
-
-      /*events.syncEvent(full, function(synced) {
-        mouseNatives[full] = synced;
-
-        return {
-          addEventListener: function(type, callback, capture) {
-            events.addEvent(this, FAKE_PREFIX + event, {
-              handler: function(e) {
-                e = Sync.extend({}, e);
-                e.type = type;
-                callback.call(this, e);
-              },
-              callback: callback,
-              capture: capture,
-              method: synced.addEventListener
-            });
-          },
-          removeEventListener: function(type, callback, capture) {
-            events.addEvent(this, FAKE_PREFIX + event, {
-              callback: callback,
-              capture: capture,
-              method: synced.removeEventListener
-            });
-          }
-        }
-      });*/
-    });
-  }());
-
-  // touch type
-
-  var findScrollParent = function(parent, computed) {
-    var parents = [{
-        computed: computed,
-        element: parent
-      }],
-      isScrollable;
-
-    while (parent && (parent = parent.parentElement)) {
-      // if (parent === document.documentElement) break;
-
-      computed = null;
-
-      if ((parent.scrollHeight > parent.clientHeight &&
-        (computed = getComputedStyle(parent)).overflowY !== 'hidden' &&
-        computed.overflowY !== 'visible') ||
-
-        (parent.scrollWidth > parent.clientWidth &&
-        (computed || (computed = getComputedStyle(parent)))
-        .overflowX !== 'hidden' && computed.overflowX !== 'visible') ||
-
-        (computed || (computed = getComputedStyle(parent))).position === 'fixed'
-      ) {
-        isScrollable = true;
-      }
-
-      parents.push({
-        element: parent,
-        computed: computed,
-        scrollable: isScrollable
-      });
-
-      isScrollable = false;
-    }
-
-    return parents;
-  };
-
-  hasTouch && (function() {
-    var touchDevice = new pointers.Device('touch'),
-      touchNatives = {},
-      touchesMap = {},
-      touchBindings = {
-        start: function(e, type) {
-          var touches = e.changedTouches;
-
-          var handleTouch = function(touch) {
-            var pointer,
-              id = touch.identifier,
-              lastEnterTarget = touchDevice.lastEnterTarget;
-
-            if (touchesMap[id]) {
-              e.preventDefault();
-              return;
-            }
-
-            var target = touch.target,
-              startTouch = {},
-              pointer = touchDevice.createPointer();
-
-            // firefox properties are from prototype
-            // and cannot be moved by Object.keys
-            for (var touchKey in touch) {
-              startTouch[touchKey] = touch[touchKey];
-            }
-
-            pointer.buttons = 1;
-
-            var overDict = getMouseDict(touch, {
-              bubbles: true,
-              cancelable: true,
-              button: 0,
-              buttons: 0,
-              relatedTarget: null // prev target goes here
-            }),
-            downDict = getMouseDict(touch, {
-              bubbles: true,
-              cancelable: true,
-              button: 0,
-              buttons: 1,
-              relatedTarget: null
-            }),
-            isPrimary = pointer.isPrimary,
-            needFastClick = isPrimary && mayNeedFastClick,
-            needEnter = (!lastEnterTarget || !lastEnterTarget !== target),
-            computed = isPrimary && getComputedStyle(target),
-            parents;
-
-            // console.log('isPrimary:', isPrimary, 'needFastClick:', mayNeedFastClick);
-
-            var touchData = touchesMap[id] = {
-              pointer: pointer,
-              time: e.timeStamp,
-              // startTouch: Sync.extend({}, touch),
-              startTouch: startTouch,
-              startTarget: target,
-              prevTarget: target,
-              computed: isPrimary && computed
-            };
-
-            if (isPrimary) {
-              parents = findScrollParent(target, computed);
-
-              var touchAction = true,
-                determinedAction,
-                scrollables = [];
-
-              parents.forEach(function(parent) {
-                var element = parent.element;
-
-                if (parent.scrollable) {
-                  scrollables.push(parent);
-                }
-
-                if (determinedAction) return;
-
-                var computed = parent.computed || getComputedStyle(element),
-                  action = computed.touchAction || computed.content
-                    .split(/\s*;\s*/).reduce(function(result, rule) {
-                      if (result) {
-                        return result;
-                      }
-
-                      rule = rule.split(/\s*:\s*/);
-
-                      if (rule[0] === 'touch-action') {
-                        return rule[1];
-                      }
-
-                      return result;
-                    }, '');
-
-                if (action === 'none') {
-                  touchAction = false;
-                  determinedAction = true;
-                }
-
-                if (parent.scrollable) {
-                  determinedAction = true;
-                }
-              });
-
-              if (touchAction) {
-                scrollables.forEach(function(parent) {
-                  parent.scrollLeft = parent.element.scrollLeft;
-                  parent.scrollTop = parent.element.scrollTop;
-                });
-
-                scrollables.push({
-                  isWin: true,
-                  scrollLeft: window.pageXOffset,
-                  scrollTop: window.pageYOffset,
-                  element: window
-                });
-
-                touchData.scrollables = scrollables;
-              }
-  
-              // !touchAction === noScroll
-              touchData.touchAction = touchAction;
-
-              if (touchDevice.currentPrimaryTouch) {
-                touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-              }
-
-              touchDevice.currentPrimaryTouch = touchData;
-            }
-
-            {
-              // this block should be uncommented if leave event should be fired
-              // not from pointerup/pointercancel event, but from pointerdown
-
-              /*if (isPrimary && lastEnterTarget &&
-                  !lastEnterTarget.contains(target)) {
-                pointer.dispatchEvent(
-                  lastEnterTarget,
-                  // inherit from mouse dict
-                  'leave', getMouseDict(touch, {
-                    bubbles: false,
-                    cancelable: false,
-                    button: 0,
-                    buttons: 0,
-                    relatedTarget: target
-                  }));
-              }*/
-            }
-
-            isPrimary && dispatchMouseEvent(
-              'move',
-              target,
-              getMouseDict(touch, {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                buttons: 0,
-                relatedTarget: null
-              })
-            );
-
-            // pointerover
-            pointer.dispatchEvent(target, 'over', overDict);
-
-            // compact mouseover
-            isPrimary && dispatchMouseEvent('over', target, overDict);
-
-            if (needEnter) {
-              // compact mouseenter
-              var enterDict = getMouseDict(touch, {
-                bubbles: false,
-                cancelable: false,
-                button: 0,
-                buttons: 0,
-                relatedTarget: lastEnterTarget
-              });
-
-              pointer.dispatchEvent(target, 'enter', enterDict);
-              isPrimary && dispatchMouseEvent('enter', target, enterDict);
-
-              touchDevice.lastEnterTarget = target;
-            }
-
-            // pointerdown
-            var canceled = !pointer.dispatchEvent(target, 'down', downDict);
-
-            if (canceled) {
-              needFastClick = false;
-              e.preventDefault();
-              touchDevice.mouseEventsPrevented = true;
-              // console.log('set no fast click by canceled pointerdown');
-            }
-
-            // compact mousedown
-            if (isPrimary && /*!touchDevice.mouseEventsPrevented*/ !canceled) {
-              dispatchMouseEvent('down', target, downDict);
-            }
-
-            if (isIOS) {
-              var selection = window.getSelection();
-
-              if (selection.rangeCount && !selection.isCollapsed) {
-                needFastClick = false;
-                // console.log('set no fast click by ios selection');
-              }
-            }
-
-            touchData.needFastClick = needFastClick;
-          };
-
-          if (touches.length) {
-            slice.call(touches).forEach(handleTouch);
-          } else {
-            handleTouch(touches[0]);
-          }
-        },
-        move: function(e, type) {
-          var touches = e.targetTouches;
-
-          var handleTouch = function(touch) {
-            var id = touch.identifier,
-              touchData = touchesMap[id];
-
-            if (!touchData) return;
-
-            // console.log(document.body.scrollTop, document.documentElement.scrollTop, pageYOffset);
-
-            var movedOut = touchData.movedOut;
-
-            if (movedOut && isIOS && !touchData.scrollClickFixed) {
-              fixIOSScroll(touchData);
-            }
-
-            if (touchData.ignoreTouch) return;
-
-            var lastEnterTarget = touchDevice.lastEnterTarget,
-              pointer = touchData.pointer,
-              isPrimary = pointer.isPrimary,
-              prevTarget = touchData.prevTarget,
-              touchAction = touchData.touchAction;
-
-            var getTarget = touchData.getTarget ||
-              (touchData.getTarget = debunce(function(touch) {
-                var target = document.elementFromPoint(
-                  touch.clientX, touch.clientY);
-
-                return target;
-              }, 10, false));
-
-            var target = getTarget(touch) || prevTarget,
-              isFirstMove;
-
-            if (isPrimary && !touchData.moved) {
-              touchData.moved = isFirstMove = true;
-            }
-
-            if (target !== prevTarget) {
-              handleTouchMove(
-                touch,
-                touchData,
-                pointer,
-                isPrimary,
-                target,
-                prevTarget
-              );
-            }
-
-            var moveDict = getMouseDict(touch, {
-              bubbles: true,
-              cancelable: true,
-              button: 0,
-              buttons: 1,
-              relatedTarget: null
-            });
-
-            var canceled = !pointer.dispatchEvent(target, 'move', moveDict)
-              && isFirstMove;
-
-            if (!isPrimary) return;
-
-            var startTouch = startTouch = touchData.startTouch;
-
-            if (!movedOut && (isAndroid && isFirstMove) ||
-                abs(startTouch.clientX - touch.clientX) >= 10 ||
-                abs(startTouch.clientY - touch.clientY) >= 10) {
-              movedOut = touchData.movedOut = true;
-              touchData.needFastClick = false;
-              // console.log('set no fast click by move');
-            }
-
-            if (!touchDevice.mouseEventsPrevented) {
-              dispatchMouseEvent('move', target, moveDict);
-            }
-
-            // prevent scroll if move canceled
-            // or if no touchAction for this element and this is Cr for Android
-            if (canceled || touchDevice.mouseEventsPrevented ||
-              (!touchAction && (!isIOS || (isIOS && movedOut)))
-            ) {
-              e.preventDefault();
-              return;
-            }
-
-            if (touchAction && !touchDevice.mouseEventsPrevented && !canceled) {
-              // cannot detect opera via isChrome but Ya and Cr is
-              var needIgnore = isAndroid && !isChrome;
-
-              if (!isAndroid && movedOut) {
-                needIgnore = true;
-              }
-
-              if (needIgnore) {
-                touchData.ignoreTouch = true;
-                touchData.needFastClick = false;
-
-                handleTouchCancel(
-                  touch,
-                  touchData,
-                  pointer,
-                  isPrimary,
-                  target,
-                  prevTarget
-                );
-              }
-
-              if (mayNeedFastClick) {
-                unbindScrollFix(touchDevice.prevPrimaryTouch);
-                bindScrollFix(touchData);
-              }
-            }
-          };
-
-          if (touches.length) {
-            slice.call(touches).forEach(handleTouch);
-          } else {
-            handleTouch(touches[0]);
-          }
-        },
-        end: function(e, type) {
-          var touches = e.changedTouches;
-
-          var handleTouch = function(touch) {
-            var id = touch.identifier,
-              touchData = touchesMap[id];
-
-            if (!touchData) return;
-
-            var lastEnterTarget = touchDevice.lastEnterTarget,
-              pointer = touchData.pointer,
-              isPrimary = pointer.isPrimary,
-              prevTarget = touchData.prevTarget,
-              getTarget = touchData.getTarget,
-              target = getTarget && getTarget(touch) || prevTarget,
-              needFastClick = touchData.needFastClick;
-
-            if (isPrimary) {
-              touchData.ended = true;
-            }
-
-            if (!touchData.ignoreTouch && prevTarget !== target) {
-              handleTouchMove(
-                touch,
-                touchData,
-                pointer,
-                isPrimary,
-                target, 
-                prevTarget
-              );
-            }
-
-            touchesMap[id] = null;
-            touchDevice.lastEnterTarget = null;
-            touchDevice.mouseEventsPrevented = false;
-
-            if (!touchData.ignoreTouch) {
-              handleTouchEnd(touch, touchData, pointer,
-                isPrimary, target, prevTarget);
-            }
-
-            pointer.destroy();
-
-            if (isPrimary && touchData.clicked) {
-              touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-              touchDevice.currentPrimaryTouch = null;
-            }
-
-            /*console.log(touchData.needFastClick + '', touchData.ignoreTouch + '', touchData.clicked + '',
-              target + '', touchData.startTouch.target + '');*/
-
-            if (!needFastClick || touchData.ignoreTouch ||
-                touchData.clicked || target !== touchData.startTouch.target) {
-              return;
-            }
-
-            e.preventDefault();
-            handleFastClick(touch, touchData, pointer,
-              isPrimary, target, prevTarget);
-          };
-
-          if (touches.length) {
-            slice.call(touches).forEach(handleTouch);
-          } else {
-            handleTouch(touches[0]);
-          }
-        },
-        cancel: function(e, type) {
-          var touches = e.changedTouches;
-
-          var handleTouch = function(touch) {
-            var id = touch.identifier,
-              touchData = touchesMap[id];
-
-            if (!touchData) return;
-
-            var lastEnterTarget = touchDevice.lastEnterTarget,
-              pointer = touchData.pointer,
-              isPrimary = pointer.isPrimary,
-              prevTarget = touchData.prevTarget,
-              getTarget = touchData.getTarget,
-              target = getTarget && getTarget(touch) || touch.target;
-
-            if (isPrimary) {
-              touchData.ended = true;
-              touchData.canceled = true;
-            }
-
-            touchesMap[id] = null;
-            touchDevice.lastEnterTarget = null;
-            touchDevice.mouseEventsPrevented = false;
-
-            if (!touchData.ignoreTouch) {
-              handleTouchCancel(touch, touchData, pointer,
-                isPrimary, target, prevTarget);
-            }
-
-            pointer.destroy();
-
-            if (isPrimary && touchData.clicked) {
-              touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-              touchDevice.currentPrimaryTouch = null;
-            }
-          };
-
-          if (touches.length) {
-            slice.call(touches).forEach(handleTouch);
-          } else {
-            handleTouch(touches[0]);
-          }
-        }
-      };
-
-    var TOUCH_SCROLL_CACHE = 'touch_scroll_cache',
-      SCROLL_FIX_DELAY = 500;
-
-    var dispatchMouseEvent = function(event, target, dict) {
-      if (!dict.view) {
-        dict.view = target.defaultView;
-      }
-
-      return events.dispatchEvent(target, FAKE_PREFIX + MOUSE_PREFIX + event, {
-        type: 'MouseEvent',
-        options: dict
-      });
-    },
-    getMouseDict = function(touch, options) {
-      options || (options = {});
-
-      [
-        'screenX', 'screenY',
-        'clientX', 'clientY',
-        'ctrlKey', 'altKey',
-        'shiftKey', 'metaKey'
-      ].forEach(function(prop) {
-        options[prop] = touch[prop];
-      });
-
-      return options;
-    },
-    handleTouchMove = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
-      touchData.prevTarget = target;
-
-      var outDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 1,
-        relatedTarget: target // prev target goes here
-      });
-
-      pointer.dispatchEvent(prevTarget, 'out', outDict);
-      isPrimary && dispatchMouseEvent('out', prevTarget, outDict);
-
-      if (!prevTarget.contains(target)) {
-        var leaveDict = getMouseDict(touch, {
-          bubbles: false,
-          cancelable: false,
-          button: 0,
-          buttons: 1,
-          relatedTarget: target // prev target goes here
-        });
-
-        pointer.dispatchEvent(prevTarget, 'leave', leaveDict);
-        isPrimary && dispatchMouseEvent('leave', prevTarget, leaveDict);
-      }
-
-      var overDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 1,
-        relatedTarget: prevTarget // prev target goes here
-      });
-
-      pointer.dispatchEvent(target, 'over', overDict);
-      isPrimary && dispatchMouseEvent('over', target, overDict);
-
-      var enterDict = getMouseDict(touch, {
-        bubbles: false,
-        cancelable: false,
-        button: 0,
-        buttons: 1,
-        relatedTarget: prevTarget // prev target goes here
-      });
-
-      pointer.dispatchEvent(target, 'enter', enterDict);
-      isPrimary && dispatchMouseEvent('enter', target, enterDict);
-    },
-    handleTouchCancel = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
-      var cancelDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: false,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      }),
-      upDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'cancel', cancelDict);
-
-      if (isPrimary && !touchDevice.mouseEventsPrevented) {
-        dispatchMouseEvent('up', window, upDict)
-      }
-
-      // simulate click may goes here
-
-      var outDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'out', outDict);
-      isPrimary && dispatchMouseEvent('out', target, outDict);
-
-      var leaveDict = getMouseDict(touch, {
-        bubbles: false,
-        cancelable: false,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      // this pointer call is under question
-      pointer.dispatchEvent(target, 'leave', leaveDict);
-      isPrimary && dispatchMouseEvent('leave', target, leaveDict);
-    },
-    handleTouchEnd = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
-      var upDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      var canceled = !pointer.dispatchEvent(target, 'up', upDict);
-
-      if (isPrimary && !touchDevice.mouseEventsPrevented) {
-        canceled ||
-        (canceled = !dispatchMouseEvent('up', target, upDict));
-      }
-
-      if (canceled) {
-        e.preventDefault();
-      }
-
-      // simulate click may goes here
-
-      var outDict = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      pointer.dispatchEvent(target, 'out', outDict);
-      isPrimary && dispatchMouseEvent('out', target, outDict);
-
-      var leaveDict = getMouseDict(touch, {
-        bubbles: false,
-        cancelable: false,
-        button: 0,
-        buttons: 0,
-        relatedTarget: null
-      });
-
-      // this pointer call is under question
-      pointer.dispatchEvent(target, 'leave', leaveDict);
-      isPrimary && dispatchMouseEvent('leave', target, leaveDict);
-    },
-    handleFastClick = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
-      var computed = touchData.computed;
-
-      var clickEvent = getMouseDict(touch, {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 1,
-        relatedTarget: null
-      });
-
-      if (needFocus(target)) {
-        target.focus();
-      }
-
-      clickEvent = new MouseEvent('click', clickEvent);
-      clickEvent.isFastClick = true;
-      target.dispatchEvent(clickEvent);
-
-      touchData.fastClicked = true;
-      // console.log('click dispatched');
-    },
-    fixIOSScroll = function(touchData) {
-      var scrolledParent;
-
-      if (touchData.scrollables.some(function(parent) {
-        var element = parent.element;
-
-        if (parent.isWin) {
-          var scrollLeft = window.pageXOffset,
-            scrollTop = window.pageYOffset;
-        } else {
-          scrollLeft = element.scrollLeft;
-          scrollTop = element.scrollTop;
-        }
-
-        if (parent.scrollLeft !== scrollLeft ||
-            parent.scrollTop !== scrollTop) {
-          scrolledParent = parent;
-          return true;
-        }
-      })) {
-        touchData.scrollClickFixed = true;
-
-        var scrolledForStyle = scrolledParent.isWin ?
-          document.documentElement : scrolledParent.element,
-          scrolledForEvent = scrolledParent.element,
-          prevCSSPointerEvents = scrolledForStyle.style.pointerEvents;
-
-        scrolledForStyle.style.pointerEvents = 'none !important';
-
-        scrolledForEvent.addEventListener('scroll', function scrollHandler() {
-          scrolledForEvent.removeEventListener('scroll', scrollHandler);
-          scrolledForStyle.style.pointerEvents = prevCSSPointerEvents;
-        });
-
-        // prevent pointer events until scrolled
-      }
-    },
-    bindScrollFix = function(touchData) {
-      if (isIOS || !touchData || touchData.scrollClickFixed) return;
-
-      var scrollables = touchData.scrollables;
-
-      touchData.scrollClickFixed = true;
-
-      scrollables.forEach(function(parent) {
-        var element = parent.element,
-          scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE),
-          scrollTimer,
-
-          firstScroll = true,
-          scrollStyleElem,
-          prevCSSPointerEvents;
-
-        if (scrollCache.scrollHandler) return;
-
-        // if (!element) return;
-
-        var scrollHandler = function() {
-          if (firstScroll) {
-            firstScroll = false;
-
-            // console.log('first scroll', element);
-
-            scrollStyleElem = parent.isWin ?
-              document.documentElement : parent.element;
-            prevCSSPointerEvents = scrollStyleElem.style.pointerEvents;
-
-            if (prevCSSPointerEvents === 'none') alert(13);
-
-            scrollStyleElem.style.pointerEvents = 'none';
-            scrollCache.styleElem = scrollStyleElem;
-            scrollCache.prevCSSPointerEvents = prevCSSPointerEvents;
-            // console.log('bind:');
-          }
-
-          if (scrollTimer) clearTimeout(scrollTimer);
-
-          scrollTimer = setTimeout(function() {
-            scrollTimer = null;
-            unbindScrollFix(touchData);
-          }, SCROLL_FIX_DELAY);
-        };
-
-        scrollCache.scrollHandler = scrollHandler;
-        element.addEventListener('scroll', scrollHandler);
-      });
-    },
-    unbindScrollFix = function(touchData) {
-      if (isIOS || !touchData || !touchData.scrollClickFixed) return;
-
-      var scrollables = touchData.scrollables;
-
-      touchData.scrollClickFixed = false;
-
-      // console.log('unbind:');
-
-      scrollables.forEach(function(parent) {
-        var element = parent.element,
-          scrollCache = Sync.cache(element, TOUCH_SCROLL_CACHE);
-
-        if (scrollCache.styleElem) {
-          scrollCache.styleElem.style.pointerEvents = scrollCache.prevCSSPointerEvents;
-          // console.log('set prev events:', scrollCache.styleElem.style.pointerEvents);
-
-          scrollCache.styleElem = null;
-          scrollCache.prevCSSPointerEvents = '';
-        }
-
-        if (scrollCache.scrollHandler) {
-          element.removeEventListener('scroll', scrollCache.scrollHandler);
-          scrollCache.scrollHandler = null;
-        }
-      });
-    },
-    needFocus = function(target) {
-      var disabled = target.disabled || target.readOnly;
-
-      switch (target.nodeName.toLowerCase()) {
-        case 'textarea':
-          return !disabled && (!isAndroidFx);
-        case 'select':
-          return !disabled && (isAndroidFx || !isAndroid);
-        case 'input': {
-          if (disabled) return false;
-
-          switch (target.type) {
-            case 'button':
-            case 'checkbox':
-            case 'file':
-            case 'image':
-            case 'radio':
-            case 'submit':
-              return isAndroidFx;
-          }
-        }
-      }
-    };
-
-
-    events.syncEvent('click', function(synced) {
-      return {
-        addEventListener: function(type, callback, capture) {
-          triggerDeviceListeners(this, type/*, capture*/, 'touch');
-
-          events.addEvent(this, type, {
-            handler: function(e) {
-              var touchData = touchDevice.currentPrimaryTouch,
-                sameTouch = touchData && (e.timeStamp - touchData.time) < 800;
-
-              // console.log(sameTouch, touchData, e.isFastClick + '');
-              // console.log(sameTouch, touchData);
-
-              if (!e.isFastClick && touchData) {
-                if (sameTouch && !touchData.ended) {
-                  touchData.clicked = true;
-                } else {
-                  touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-                  touchDevice.currentPrimaryTouch = null;
-                }
-              }
-
-              console.log('prevented:', sameTouch && (touchData.ignoreTouch || touchData.fastClicked));
-
-              if (sameTouch && (touchData.ignoreTouch || touchData.fastClicked)) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-              } else {
-                callback.call(this, e);
-              }
-            },
-            callback: callback,
-            capture: capture,
-            method: synced.addEventListener
-          });
-        },
-        removeEventListener: function(type, callback, capture) {
-          muteDeviceListeners(this, type/*, capture*/, 'touch');
-
-          events.removeEvent(this, type, {
-            callback: callback,
-            capture: capture,
-            method: synced.removeEventListener
-          });
-        }
-      };
-    });
-
-    events.syncEvent('contextmenu', function(synced) {
-      return {
-        addEventListener: function(type, callback, capture) {
-          events.addEvent(this, type, {
-            handler: function(e) {
-              var touchData = touchDevice.currentPrimaryTouch;
-
-              if (touchData) {
-                if (!touchData.ended) {
-                  touchData.clicked = true;
-                } else {
-                  touchDevice.prevPrimaryTouch = touchDevice.currentPrimaryTouch;
-                  touchDevice.currentPrimaryTouch = null;
-                }
-              }
-
-              callback.call(this, e);
-            },
-            callback: callback,
-            capture: capture,
-            method: synced.addEventListener
-          });
-        },
-        removeEventListener: function(type, callback, capture) {
-          events.removeEvent(this, type, {
-            callback: callback,
-            capture: capture,
-            method: synced.removeEventListener
-          });
-        }
-      };
-    });
-
-    touchDevice.bindListener = function(node, event) {
-      /*var binding = touchBindings[event];
-
-      binding(node, event);*/
-
-      Sync.each(touchBindings, function(fn, key) {
-        var full = TOUCH_PREFIX + key;
-
-        events.addEvent(node, full, {
-          handler: function(e) {
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-
-            fn.call(this, e, event);
-          },
-          callback: fn,
-          capture: /*capture*/ true,
-          method: touchNatives[full].addEventListener,
-          namespace: NS_TOUCH_POINTER
-        });
-      });
-
-      // touchBindings(node, event);
-
-      // method: mouseNatives[type].addEventListener,
-      // namespace: NS_MOUSE_POINTER
-    };
-
-    touchDevice.unbindListener = function(node, event, capture) {
-      Sync.each(touchBindings, function(fn, key) {
-        var full = TOUCH_PREFIX + key;
-
-        events.removeEvent(node, full, {
-          callback: fn,
-          capture: /*capture*/ true,
-          method: touchNatives[full].removeEventListener,
-          namespace: NS_TOUCH_POINTER
-        });
-      });
-    };
-
-
-    // no more touch events for this world
-    [
-      'start',
-      'end',
-      'move',
-      'enter',
-      'leave',
-      'cancel'
-    ].forEach(function(event) {
-      var full = TOUCH_PREFIX + event;
-
-      events.syncEvent(full, function(synced) {
-        touchNatives[full] = synced;
-
-        return {
-          addEventListener: function() {},
-          removeEventListener: function() {}
-        }
-      });
-    });
-  }());
-}(Sync));;(function(window, document, Sync, undefined) {
+}(this, this.document, Sync));;(function(window, document, Sync, undefined) {
   "use strict";
 
   var xhr = new XMLHttpRequest(),
@@ -5941,9 +3760,11 @@ requireModule('promise/polyfill').polyfill();
     perspectiveOrigin,
     transformOrigin,
     transformStyle,
-    style = document.createElement('div').style;
+    style = document.createElement('div').style,
+    arrayJoin = Array.prototype.join;
 
-  var R_VENDORS = /(webkit|moz|ms|o)-/i;
+  var R_VENDORS = /(webkit|moz|ms|o)-/i,
+    R_CSS_FN = /^\s*([\w\-]+?)\(([\s\S]*?)\)\s*?$/;
 
   var camelToCss = function(str, w) {
     return '-' + w.toLowerCase();
@@ -6049,7 +3870,10 @@ requireModule('promise/polyfill').polyfill();
       rotatex: 'deg',
       rotatey: 'deg',
       rotatez: 'deg',
-      scalez: ''
+      scalez: '',
+      translate3d: 'px',
+      scale3d: '',
+      rotate3d: 'deg'
     },
     R_CAMEL_TO_CSS = /([A-Z])(?=[a-z])/g,
     DEFAULT_TRANSITION_DURATION = 300,
@@ -6067,7 +3891,8 @@ requireModule('promise/polyfill').polyfill();
     },
     REQUEST_ANIMATION_FRAME = 'RequestAnimationFrame',
     CANCEL_REQUEST_ANIMATION_FRAME = 'CancelAnimationFrame',
-    TRANSITION_DATA_KEY = 'transition_data';
+    TRANSITION_DATA_KEY = 'transition_data',
+    TRANSFORM_CACHE_KEY = 'sync_transform_cache';
 
   if (!window.requestAnimationFrame) {
     window.requestAnimationFrame = ['webkit', 'moz', 'o']
@@ -6077,6 +3902,7 @@ requireModule('promise/polyfill').polyfill();
         return !!a;
       })[0] || function(fn, element) {
         return setTimeout(function() {
+          document.body && document.body.offsetHeight;
           fn.call(element, getTime());
         }, 15);
       };
@@ -6249,9 +4075,13 @@ requireModule('promise/polyfill').polyfill();
     });*/
   };
 
-  Transition.stop = function(element) {
+  Transition.stop = function(element, jumpToEnd) {
     Transition.clean(element);
+
     element.style[transitionProperty] = 'null';
+    element.style[transitionProperty] = '';
+
+    if (jumpToEnd) return;
   };
 
   Transition.clean = function(element, listeners) {
@@ -6313,8 +4143,13 @@ requireModule('promise/polyfill').polyfill();
             var transitionListener = function(e) {
               if (e.eventPhase !== e.AT_TARGET) return;
 
-              var property = e.propertyName,
-                index = listeners.indexOf(transitionListener);
+              var property = e.propertyName;
+
+              if (property !== cssKey) {
+                return;
+              }
+
+              var index = listeners.indexOf(transitionListener);
 
               if (index !== -1) {
                 listeners.splice(index, 1);
@@ -6324,20 +4159,20 @@ requireModule('promise/polyfill').polyfill();
                 elem.removeEventListener(event, transitionListener, true);
               });
 
-              if (property === cssKey) {
-                if (transCallback) {
-                  transCallback();
-                }
+              if (transCallback) {
+                transCallback();
+              }
 
-                if (next) {
-                  next();
-                }
+              if (next) {
+                next();
               }
             };
 
             listeners.push(transitionListener);
 
             eventName.forEach(function(event) {
+              // elem.addEventListener(event, transitionListener, true);
+              console.log(cssKey, eventName, 'added');
               elem.addEventListener(event, transitionListener, true);
             });
           } else {
@@ -6351,7 +4186,6 @@ requireModule('promise/polyfill').polyfill();
           }
         },
         end = function() {
-
           if (callback) {
             callback();
           }
@@ -6433,34 +4267,66 @@ requireModule('promise/polyfill').polyfill();
   // Transform section
   if (transformProperty) {
     var Transform = function(element, map) {
-      var stack;
+      var stack = [],
+        store,
+        self;
+
+      var applyMap = function() {
+        Sync.each(map, function(val, key) {
+          if (hasOwn.call(Transform, key)) {
+            val = isArray(val) ? val : [val];
+
+            self[key].apply(self, val);
+          }
+        });
+      };
+
+      store = this.store = {};
+      this.stack = stack;
 
       if (element && element.nodeType === Node.ELEMENT_NODE) {
         // need to real parse values
-        stack = this.stack = [element.style.transform];
+        // stack = this.stack = element.style.transform
+
+        var hasTrasform = Sync.cache(element)[TRANSFORM_CACHE_KEY];
+
+        if (hasTrasform) {
+          self = hasTrasform;
+          applyMap();
+          return hasTrasform;
+        }
+
+        this.element = element;
+
+        self = this;
+        element.style.transform.split(/\s+/).forEach(function(str) {
+          var match = R_CSS_FN.exec(str);
+
+          if (match) {
+            var key = match[1],
+              val = match[2].split(/\s*,\s*/);
+
+            self[key].apply(self, val);
+          }
+        });
       } else {
-        stack = this.stack = [];
+        // stack = this.stack = [];
         map = element;
         element = null;
+        self = this;
       }
 
-      Sync.each(map, function(val, key) {
-        if (hasOwn.call(Transform, key)) {
-          val = Transform[key].apply(Transform, isArray(val) ? val : [val]);
-          stack.push(val);
-        }
-      });
+      applyMap();
 
-      // Object.keys(map).forEach(function(name) {
-      //   stack
-      //     .push(name + '(' + (map[name] + '')
-      //     .replace(/\s*(,)|$\s*/g, TRANSFORM_MAP[name.toLowerCase()] + '$1') + ')');
-      // });
+      if (element) {
+        Sync.cache(element)[TRANSFORM_CACHE_KEY] = this;
+      }
     };
 
     var transforms2d = [{
       key: 'translate',
-      len: 2
+      len: 2,
+      primitives: ['translateX', 'translateY']
     }, {
       key: 'translateX',
       len: 1
@@ -6472,7 +4338,8 @@ requireModule('promise/polyfill').polyfill();
       len: 1
     }, {
       key: 'scale',
-      len: 2
+      len: 2,
+      primitives: ['scaleX', 'scaleY']
     }, {
       key: 'scaleX',
       len: 1
@@ -6481,7 +4348,8 @@ requireModule('promise/polyfill').polyfill();
       len: 1
     }, {
       key: 'skew',
-      len: 2
+      len: 2,
+      // primitives: ['skewX', 'skewY']
     }, {
       key: 'skewX',
       len: 1
@@ -6511,36 +4379,148 @@ requireModule('promise/polyfill').polyfill();
       }, {
         key: 'rotateZ',
         len: 1
+      }, {
+        key: 'rotate3d',
+        len: 3,
+        // primitives: ['rotateX', 'rotateY', 'rotateZ']
+      }, {
+        key: 'scale3d',
+        len: 3,
+        primitives: ['scaleX', 'scaleY', 'scaleZ']
+      }, {
+        key: 'translate3d',
+        len: 3,
+        primitives: ['translateX', 'translateY', 'translateZ']
       });
     }
+
+    var transforms2dMap = {};
 
     // 2d transforms
 
     transforms2d.forEach(function(prop) {
       var key = prop.key,
-        len = prop.len;
+        len = prop.len,
+        primitives = prop.primitives,
+        hasPrimitives = Array.isArray(primitives);
 
-      var transform = Transform[key] = function() {
+      transforms2dMap[key] = prop;
+
+      var transform = function() {
         var args = slice.call(arguments, 0, len).map(function(arg) {
           return arg !== void 0 ?
             parseFloat(arg) + TRANSFORM_MAP[key.toLowerCase()] : 0;
-        });
+        }),
+        self = this instanceof Transform ? this : null;
 
-        return key + '(' + args.join(',') + ')';
+        if (hasPrimitives) {
+          return args.reduce(function(result, arg, i) {
+            var key = primitives[i];
+
+            if (!key) return result;
+
+            var full = key + '(' + arg + ')';
+            self && self.addProperty(key, full, [arg]);
+
+            return result += (' ' + full);
+          }, '');
+        }
+
+        var full = key + '(' + args.join(',') + ')';
+        self && self.addProperty(key, full, args);
+
+        return full;
+      };
+
+      Transform[key] = function() {
+        return transform.apply(null, arguments);
       };
 
       Transform.prototype[key] = function() {
-        this.stack.push(transform.apply(null, arguments));
+        transform.apply(this, arguments);
+
         return this;
       };
     });
+
+    Transform.prototype.getValue = function(key, index) {
+      return parseFloat(this.store[key].val[index | 0]);
+    };
+
+    Transform.getMatrix = function(element) {
+      var R_MATRIX_FN = /matrix(?:3d)?\(([\s\S]+?)\)/gi;
+
+      var transformMatrix = window.getComputedStyle(element).transform,
+        is3D = transformMatrix.indexOf('matrix3d') === 0,
+        matrixArgs = R_MATRIX_FN.exec(transformMatrix)[1]
+          .split(', ').map(function(val) { return +val });
+
+      return {
+        matrix: matrixArgs,
+        is3D: is3D
+      };
+    };
+
+    Transform.fromMatrix = function(element) {
+      var data = Transform.getMatrix(element),
+        matrix;
+
+      if (data.is3D) {
+        matrix = decomposeMatrix(data.matrix);
+
+        return new Transform({
+          rotate3d: matrix.rotate.map(function(axis) {
+            return rad2deg(axis);
+          }),
+          translate3d: matrix.translate,
+          scale3d: matrix.scale,
+          skew: matrix.skew.slice(0, 2).map(function(axis) {
+            return rad2deg(axis);
+          })
+        });
+      }
+
+      matrix = decomposeMatrix2d(data.matrix);
+
+      var transform = matrix.reduce(function(result, transform) {
+        result[transform[0]] = transform[1];
+        return result;
+      }, {});
+
+      return new Transform(transform);
+    };
+
+    Transform.prototype.addProperty = function(key, full, val) {
+      var store = this.store,
+        stored = typeof store[key] !== 'undefined';
+
+      if (stored) {
+        stored = store[key];
+
+        stored.val = val;
+        this.stack[stored.index] = full;
+      } else {
+        var index = this.stack.push(full) - 1;
+
+        store[key] = {
+          index: index,
+          val: val
+        };
+      }
+    };
 
     Transform.prototype.toString = function() {
       return this.stack.join(' ');
     };
 
     Transform.prototype.apply = function(element) {
+      if (!(element = element || this.element)) return;
+
+      this.element = element;
       element.style[transformProperty] = this;
+      Sync.cache(element)[TRANSFORM_CACHE_KEY] = this;
+
+      return this;
     };
   }
 
@@ -6581,4 +4561,346 @@ requireModule('promise/polyfill').polyfill();
   });
 
   style = null;
+
+  // self, but from third-party example
+
+  var rad2deg = function(rad) {
+    return rad * (180 / Math.PI);
+  },
+  m2tom3 = function(matrix) {
+    var newMatrix = [
+      matrix[0], matrix[1], 0, matrix[2],
+      matrix[3], matrix[4], 0, matrix[5],
+      0, 0, 1, 0,
+      0, 0, 0, 1
+    ];
+
+    return newMatrix;
+  };
+
+
+  // modified algorithm from
+  // http://www.maths-informatique-jeux.com/blog/frederic/?post/2013/12/01/Decomposition-of-2D-transform-matrices
+  var decomposeMatrix2d = function(matrix) {
+    var a = matrix[0];
+    var b = matrix[1];
+    var c = matrix[2];
+    var d = matrix[3];
+    var e = matrix[4];
+    var f = matrix[5];
+
+    console.log(matrix);
+
+    var determinant = a * d - b * c;
+
+    if (determinant === 0) {
+      console.log('return zz');
+      return;
+    }
+
+    var translate = [e, f];
+
+    var applyTransform = function(arr, transform, type) {
+      if (/*type === 'rotate' && */!transform ||
+          type === 'translate' && transform[0] === 0 && transform[1] === 0 ||
+          type === 'scale' && transform[0] === 1 && transform[1] === 1 ||
+          type === 'skew' && transform[0] === 0 && transform[1] === 0) {
+        return;
+      }
+
+      arr.push([type, transform]);
+    };
+
+    var QRLike = function() {
+      var rotate,
+        skew,
+        scale,
+        transforms = [];
+
+      if (a !== 0 || b !== 0) {
+        var r = Math.sqrt(a * a + b * b);
+
+        rotate = rad2deg(b > 0 ? Math.acos(a / r) : -Math.acos(a / r));
+        scale = [r, determinant / r];
+        skew = [rad2deg(Math.atan((a * c + b * d) / (r * r))), 0];
+      } else if (c !== 0 || d !== 0) {
+        var s = Math.sqrt(c * c + d * d);
+
+        rotate = rad2deg(Math.PI / 2 - (d > 0 ? Math.acos(-c / s) : -Math.acos(c / s)));
+        scale = [determinant / s, s];
+        skew = [0, rad2deg(Math.atan((a * c + b * d) / (s * s)))];
+      } else { // a = b = c = d = 0
+        scale = [0, 0];
+      }
+
+      applyTransform(transforms, rotate, 'rotate');
+      applyTransform(transforms, scale, 'scale');
+      applyTransform(transforms, skew, 'skew');
+
+      return transforms;
+    };
+
+    var LULike = function() {
+      var transforms = [];
+
+      if (a !== 0) {
+        applyTransform(transforms, rad2deg(Math.atan(b / a)), 'skewY');
+        applyTransform(transforms, [a, determinant / a], 'scale');
+        applyTransform(transforms, rad2deg(Math.atan(c / a)), 'skewX');
+      } else if (b != 0) {
+        applyTransform(transforms, rad2deg(Math.PI / 2), 'rotate');
+        applyTransform(transforms, [b, determinant / b], 'scale');
+        applyTransform(transforms, rad2deg(Math.atan(d / b)), 'skewX');
+      } else { // a = b = 0
+        return QRLike();
+      }
+
+      return transforms;
+    };
+
+    var lu = LULike(),
+      qr = QRLike(),
+      use = lu.length < qr.length ? lu : qr;
+      // use = lu;
+
+    applyTransform(use, translate, 'translate');
+
+    return use;
+  };
+
+  // Third-party
+  var decomposeMatrix = (function() {
+    // this is only ever used on the perspective matrix, which has 0, 0, 0, 1 as
+    // last column
+    function determinant(m) {
+      return m[0][0] * m[1][1] * m[2][2] +
+             m[1][0] * m[2][1] * m[0][2] +
+             m[2][0] * m[0][1] * m[1][2] -
+             m[0][2] * m[1][1] * m[2][0] -
+             m[1][2] * m[2][1] * m[0][0] -
+             m[2][2] * m[0][1] * m[1][0];
+    }
+
+    // from Wikipedia:
+    //
+    // [A B]^-1 = [A^-1 + A^-1B(D - CA^-1B)^-1CA^-1     -A^-1B(D - CA^-1B)^-1]
+    // [C D]      [-(D - CA^-1B)^-1CA^-1                (D - CA^-1B)^-1      ]
+    //
+    // Therefore
+    //
+    // [A [0]]^-1 = [A^-1       [0]]
+    // [C  1 ]      [ -CA^-1     1 ]
+    function inverse(m) {
+      var iDet = 1 / determinant(m);
+      var a = m[0][0], b = m[0][1], c = m[0][2];
+      var d = m[1][0], e = m[1][1], f = m[1][2];
+      var g = m[2][0], h = m[2][1], k = m[2][2];
+      var Ainv = [
+        [(e * k - f * h) * iDet, (c * h - b * k) * iDet,
+         (b * f - c * e) * iDet, 0],
+        [(f * g - d * k) * iDet, (a * k - c * g) * iDet,
+         (c * d - a * f) * iDet, 0],
+        [(d * h - e * g) * iDet, (g * b - a * h) * iDet,
+         (a * e - b * d) * iDet, 0]
+      ];
+      var lastRow = [];
+      for (var i = 0; i < 3; i++) {
+        var val = 0;
+        for (var j = 0; j < 3; j++) {
+          val += m[3][j] * Ainv[j][i];
+        }
+        lastRow.push(val);
+      }
+      lastRow.push(1);
+      Ainv.push(lastRow);
+      return Ainv;
+    }
+
+    function transposeMatrix4(m) {
+      return [[m[0][0], m[1][0], m[2][0], m[3][0]],
+              [m[0][1], m[1][1], m[2][1], m[3][1]],
+              [m[0][2], m[1][2], m[2][2], m[3][2]],
+              [m[0][3], m[1][3], m[2][3], m[3][3]]];
+    }
+
+    function multVecMatrix(v, m) {
+      var result = [];
+      for (var i = 0; i < 4; i++) {
+        var val = 0;
+        for (var j = 0; j < 4; j++) {
+          val += v[j] * m[j][i];
+        }
+        result.push(val);
+      }
+      return result;
+    }
+
+    function normalize(v) {
+      var len = length(v);
+      return [v[0] / len, v[1] / len, v[2] / len];
+    }
+
+    function length(v) {
+      return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    }
+
+    function combine(v1, v2, v1s, v2s) {
+      return [v1s * v1[0] + v2s * v2[0], v1s * v1[1] + v2s * v2[1],
+              v1s * v1[2] + v2s * v2[2]];
+    }
+
+    function cross(v1, v2) {
+      return [v1[1] * v2[2] - v1[2] * v2[1],
+              v1[2] * v2[0] - v1[0] * v2[2],
+              v1[0] * v2[1] - v1[1] * v2[0]];
+    }
+
+    // TODO: Implement 2D matrix decomposition.
+    // http://dev.w3.org/csswg/css-transforms/#decomposing-a-2d-matrix
+    function decomposeMatrix(matrix) {
+      var m3d = [
+        matrix.slice(0, 4),
+        matrix.slice(4, 8),
+        matrix.slice(8, 12),
+        matrix.slice(12, 16)
+      ];
+
+      // skip normalization step as m3d[3][3] should always be 1
+      if (m3d[3][3] !== 1) {
+        throw 'attempt to decompose non-normalized matrix';
+      }
+
+      var perspectiveMatrix = m3d.concat(); // copy m3d
+      for (var i = 0; i < 3; i++) {
+        perspectiveMatrix[i][3] = 0;
+      }
+
+      if (determinant(perspectiveMatrix) === 0) {
+        return false;
+      }
+
+      var rhs = [];
+
+      var perspective;
+      if (m3d[0][3] !== 0 || m3d[1][3] !== 0 || m3d[2][3] !== 0) {
+        rhs.push(m3d[0][3]);
+        rhs.push(m3d[1][3]);
+        rhs.push(m3d[2][3]);
+        rhs.push(m3d[3][3]);
+
+        var inversePerspectiveMatrix = inverse(perspectiveMatrix);
+        var transposedInversePerspectiveMatrix =
+            transposeMatrix4(inversePerspectiveMatrix);
+        perspective = multVecMatrix(rhs, transposedInversePerspectiveMatrix);
+      } else {
+        perspective = [0, 0, 0, 1];
+      }
+
+      var translate = m3d[3].slice(0, 3);
+
+      var row = [];
+      row.push(m3d[0].slice(0, 3));
+      var scale = [];
+      scale.push(length(row[0]));
+      row[0] = normalize(row[0]);
+
+      var skew = [];
+      row.push(m3d[1].slice(0, 3));
+      skew.push(dot(row[0], row[1]));
+      row[1] = combine(row[1], row[0], 1.0, -skew[0]);
+
+      scale.push(length(row[1]));
+      row[1] = normalize(row[1]);
+      skew[0] /= scale[1];
+
+      row.push(m3d[2].slice(0, 3));
+      skew.push(dot(row[0], row[2]));
+      row[2] = combine(row[2], row[0], 1.0, -skew[1]);
+      skew.push(dot(row[1], row[2]));
+      row[2] = combine(row[2], row[1], 1.0, -skew[2]);
+
+      scale.push(length(row[2]));
+      row[2] = normalize(row[2]);
+      skew[1] /= scale[2];
+      skew[2] /= scale[2];
+
+      var pdum3 = cross(row[1], row[2]);
+      if (dot(row[0], pdum3) < 0) {
+        for (var i = 0; i < 3; i++) {
+          scale[i] *= -1;
+          row[i][0] *= -1;
+          row[i][1] *= -1;
+          row[i][2] *= -1;
+        }
+      }
+
+      var t = row[0][0] + row[1][1] + row[2][2] + 1;
+      var s;
+      var quaternion;
+
+      if (t > 1e-4) {
+        s = 0.5 / Math.sqrt(t);
+        quaternion = [
+          (row[2][1] - row[1][2]) * s,
+          (row[0][2] - row[2][0]) * s,
+          (row[1][0] - row[0][1]) * s,
+          0.25 / s
+        ];
+      } else if (row[0][0] > row[1][1] && row[0][0] > row[2][2]) {
+        s = Math.sqrt(1 + row[0][0] - row[1][1] - row[2][2]) * 2.0;
+        quaternion = [
+          0.25 * s,
+          (row[0][1] + row[1][0]) / s,
+          (row[0][2] + row[2][0]) / s,
+          (row[2][1] - row[1][2]) / s
+        ];
+      } else if (row[1][1] > row[2][2]) {
+        s = Math.sqrt(1.0 + row[1][1] - row[0][0] - row[2][2]) * 2.0;
+        quaternion = [
+          (row[0][1] + row[1][0]) / s,
+          0.25 * s,
+          (row[1][2] + row[2][1]) / s,
+          (row[0][2] - row[2][0]) / s
+        ];
+      } else {
+        s = Math.sqrt(1.0 + row[2][2] - row[0][0] - row[1][1]) * 2.0;
+        quaternion = [
+          (row[0][2] + row[2][0]) / s,
+          (row[1][2] + row[2][1]) / s,
+          0.25 * s,
+          (row[1][0] - row[0][1]) / s
+        ];
+      }
+
+      var rotateY = Math.asin(-row[0][2]),
+        rotateX,
+        rotateZ;
+
+      if (Math.cos(rotateY) != 0) {
+          rotateX = Math.atan2(row[1][2], row[2][2]);
+          rotateZ = Math.atan2(row[0][1], row[0][0]);
+      } else {
+          rotateX = Math.atan2(-row[2][0], row[1][1]);
+          rotateZ = 0;
+      }
+
+      return {
+        rotate: [rotateX, rotateY, rotateZ],
+        translate: translate,
+        scale: scale,
+        skew: skew,
+        quaternion: quaternion,
+        perspective: perspective
+      };
+    }
+
+    function dot(v1, v2) {
+      var result = 0;
+      for (var i = 0; i < v1.length; i++) {
+        result += v1[i] * v2[i];
+      }
+      return result;
+    }
+    return decomposeMatrix;
+  })();
 }(this));

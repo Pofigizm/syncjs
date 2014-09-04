@@ -16,7 +16,8 @@
         HANDLE_MOUSE_EVENTS_ANDROID: false,
         TOUCHMOVE_SLOP_SIZE: 10,
         // one of: auto, pointers-first, touch-first
-        TOUCH_COMPATIBILITY_MODE: 'touch-first'
+        TOUCH_COMPATIBILITY_MODE: 'touch-first',
+        PINCH_ZOOM_BEHAVIOR_PROPAGATION: false
       },
       devices: {}
     };
@@ -684,18 +685,34 @@
 
   // ###################
 
-  var mayNeedFastClick = (function() { return true;
+  var viewport = (function() {
     var metaViewport = document.querySelector('meta[name="viewport"]'),
-      hasNoScale = metaViewport &&
-        metaViewport.content.toLowerCase().indexOf('user-scalable=no') !== -1;
+      metaContent = metaViewport && metaViewport.content.toLowerCase(),
+      hasScale = !metaContent;
 
-    if (metaViewport) {
+    if (metaContent) {
+      var userScalable = metaContent.indexOf('user-scalable=no') === -1,
+        maximumScale = (metaContent.match(/maximum-scale=([\d\.]+?)/) || [])[1],
+        minimumScale = (metaContent.match(/minimum-scale=([\d\.]+?)/) || [])[1];
+
+      hasScale = userScalable ||
+        // Android stock does not support minimum scale
+        (maximumScale === minimumScale && !isAndroidStock);
+    }
+
+    return {
+      meta: metaViewport,
+      scaleAllowed: hasScale
+    };
+  }()),
+  mayNeedFastClick = (function() { return true;
+    if (viewport.meta) {
       // Chrome on Android with user-scalable="no" doesn't need FastClick (issue #89)
       // https://github.com/ftlabs/fastclick/issues/89
 
       // under question is false for Fx with his strange behavior when touch hold
       // also trigger click (some thing about 600ms after touchstart)
-      if ((isChromeAndroid || isBB10 || isAndroidFx) && hasNoScale) {
+      if ((isChromeAndroid || isBB10 || isAndroidFx) && !viewport.scaleAllowed) {
         return false;
       }
 
@@ -710,20 +727,23 @@
     }
 
     // scaled viewport
-    if (!hasNoScale) {
+    if (viewport.scaleAllowed) {
       return false;
     }
 
     return true;
   }()),
-  findScrollParent = function(parent, computed) {
+  findScrollAncestors = function(parent, computed, iterator) {
     var parents = [{
         computed: computed,
         element: parent
       }],
-      isScrollable;
+      isScrollable,
+      iterate = typeof iterator === 'function',
+      isLast,
+      parentData;
 
-    while (parent && (parent = parent.parentElement)) {
+    while (parent) {
       // if (parent === document.documentElement) break;
 
       computed = null;
@@ -741,14 +761,24 @@
         isScrollable = true;
       }
 
-      parents.push({
+      parents.push(parentData = {
         element: parent,
         computed: computed,
         scrollable: isScrollable
       });
 
+      if (!(parent = parent.parentElement)) {
+        isLast = true;
+      }
+
+      if (iterate) {
+        iterator(parentData, isLast);
+      }
+
       isScrollable = false;
     }
+
+    parentData = parent = computed = null;
 
     return parents;
   },
@@ -758,6 +788,45 @@
     if (captured) {
       pointer.captureElement.releasePointerCapture(pointer.id);
     }
+  },
+  setOverflowHiddenY = false && (isChromeAndroid || isAndroidStock) ? function(node) {
+    var createShadowRoot = (node.createShadowRoot || node.webkitCreateShadowRoot);
+
+    if (!createShadowRoot) {
+      node.style.overflowY = 'hidden';
+      return;
+    }
+
+    var overflowMarkup = '<div class="yyy" style="width: 100%; overflow: visible; position: relative;height: 100%;">' +
+      '<div class="xxx" style="/*height: 293px;*/ overflow: hidden; position: absolute;"><div class="zzz" style="/*height: 283px;*/ overflow: visible;">' +
+      '<content></content><div style="float: right; width: 0; height:0"></div></div></div></div>';
+
+    root.innerHTML = overflowMarkup;
+
+    var computed = window.getComputedStyle(node),
+      paddingTop = parseFloat(computed.paddingTop),
+      paddingBottom = parseFloat(computed.paddingBottom),
+      borderTop = parseFloat(computed.borderTop),
+      borderBottom = parseFloat(computed.borderBottom),
+      clientHeight = node.clientHeight,
+      innerHeight = clientHeight - (paddingTop + paddingBottom),
+      innerWidth = node.clientWidth -
+        (parseFloat(computed.paddingLeft) + parseFloat(computed.paddingRight)),
+      scrollerHeight = node.offsetHeight -
+        clientHeight - (borderTop + borderBottom);
+
+    var xxx = root.querySelector('xxx'),
+      zzz = root.querySelector('zzz');
+
+    xxx.style.height = innerHeight + paddingTop + 'px';
+    zzz.style.position = 'absolute';
+    zzz.style.height = innerHeight + 'px';
+    zzz.style.width = innerWidth + 'px';
+  } : function(node) {
+    node.style.overflowY = 'hidden';
+  },
+  setOverflowHiddenX = function(node) {
+    node.style.overflowX = 'hidden';
   };
 
   console.log('mayNeedFastClick:', mayNeedFastClick);
@@ -774,22 +843,7 @@
             touchCanceled,
             touchDispatched;
 
-          var firstMove,
-            touches = slice.call(touches).map(function(touch) {
-              var id = touch.identifier,
-                touchData = touchesMap[id];
-
-              if (firstMove !== false) {
-                firstMove = !touchData.moved;
-              }
-
-              return touchData;
-            });
-
-          // prevent pinch-to-zoom gesture
-          if (touches.length > 1 && firstMove) {
-            e.preventDefault();
-          }
+          preHandleTouchMove(e, type);
 
           var handleTouch = function(touch) {
             var id = touch.identifier,
@@ -825,6 +879,7 @@
                 (touchData.getTarget = debunce(doHitTest, 10, false)),
               target = needHitTest ?
                 getTarget(touch) || prevTarget : prevTarget,
+              movedOut = touchData.movedOut,
               isFirstMove,
               fireMouseEvents;
 
@@ -835,7 +890,7 @@
 
             fireMouseEvents = touchData.fireMouseEvents;
 
-            if (isPrimary && !touchData.moved) {
+            if (!touchData.moved) {
               touchData.moved = isFirstMove = true;
             }
 
@@ -861,25 +916,28 @@
               relatedTarget: null
             });
 
-            var canceled = !pointer.dispatchEvent(target, 'move', moveDict)
-              && isFirstMove;
+            // fire pointer move
+            // here is question:
+            // always fire one pointermove even is next 'll be pointercancel
+            // or do something special
+            pointer.dispatchEvent(target, 'move', moveDict);
 
             if (!isPrimary) return;
 
-            var movedOut = checkForMovedOut(touchData, touch, isFirstMove);
+            if (touchData.stream.isZoomPrevented) {
+              touchData.needFastClick = false;
+              return;
+            }
 
             if (fireMouseEvents && !touchDevice.mouseEventsPrevented) {
               dispatchMouseEvent('move', target, moveDict);
             }
 
-            // prevent scroll if move canceled -- wrong
-            // this should be only for canceling touchmove
-            // -------------------------------------------
-            // or if no touchAction for this element and
-            // this is Android or something else and moved out
-            if (touchCanceled || (!touchAction && movedOut &&
+            // prevent scroll if touch canceled
+            // or if none touchAction for this element
+            if (touchCanceled || (!touchAction === touchActionBits['none'] &&
               // for touchStartCanceled this work already did
-              !touchStartCanceled)
+              movedOut && !touchStartCanceled)
             ) {
               // console.log('cancel fast click by moved out');
               touchData.needFastClick = false;
@@ -890,10 +948,9 @@
               return;
             }
 
-            // commented 2 options which check that touch is prevented or not
-            // this is should only be checked from Touch Events cancelation
-            // not from Pointer Events
-            if (touchAction && !touchStartCanceled && !touchCanceled) {
+            // handle not consumed touch behavior
+            if (touchAction !== touchActionBits['none'] &&
+              !touchStartCanceled && !touchCanceled) {
               // cannot detect opera via isChrome but Ya and Cr is
               var needIgnore = isAndroid &&
                 (flags.DETECT_CHROME_BEHAVIOR ? !isChrome : true);
@@ -912,7 +969,7 @@
               if (needIgnore) {
                 touchData.ignoreTouch = true;
                 touchData.needFastClick = false;
-                console.log('cancled fast click be ignore');
+                console.log('canceled fast click be ignore');
 
                 handleTouchCancel(
                   touch,
@@ -994,8 +1051,6 @@
             }
 
             cleanUpTouch(touchData);
-            touchHelper.leaveStream(touchData);
-            touchData.stream = null;
 
             if (!e.targetTouches.length) {
               removeTouchBindings(touchData.startTarget, type);
@@ -1039,8 +1094,6 @@
             }
 
             cleanUpTouch(touchData);
-            touchHelper.leaveStream(touchData);
-            touchData.stream = null;
 
             if (!e.targetTouches.length) {
               removeTouchBindings(touchData.startTarget, type);
@@ -1059,11 +1112,16 @@
         Stream: function() {
           this.touches = [];
         },
-        getStream: function(touchData) {
+        getStream: function() {
+          return this.stream;
+        },
+        useStream: function(touchData) {
           var stream = this.stream ||
             (this.stream = new this.Stream());
 
           stream.addTouchData(touchData);
+
+          return stream;
         },
         leaveStream: function(touchData) {
           var stream = this.stream;
@@ -1106,31 +1164,16 @@
       isActual: null
     };
 
-    /*,
-    touchActionBits = {
-      'none': 0,
-      'pan-x': 1,
-      'pan-y': 2,
-
-      'scroll:' 3,
-
-      // ignored
-      // 'pinch-zoom': 4,
-
-      // set
-      'manipulation': 7,
-
-      // set
-      'auto': 15
-    };*/
-
     var touchActionBits = {
-      'none': 1 << 0,
-      'pan-x': 1 << 1,
-      'pan-y': 1 << 2,
+      'none'        : 1 << 0,
+      'pan-x'       : 1 << 1,
+      'pan-y'       : 1 << 2,
       'manipulation': 1 << 3,
-      'auto': 1 << 4
+      'auto'        : 1 << 4
     };
+
+    touchActionBits['scroll'] =
+      touchActionBits['pan-x'] | touchActionBits['pan-y'];
 
     var TOUCH_SCROLL_CACHE = 'touch_scroll_cache',
       TOUCH_LISTENERS_CACHE = 'touch_listeners_cache',
@@ -1141,8 +1184,6 @@
     var initTouchStart = function(e, type) {
       var touches = e.changedTouches,
         self = this;
-
-      console.log(e.target, 'touchstart');
 
       var handleTouch = function(touch) {
         var id = touch.identifier,
@@ -1156,6 +1197,7 @@
         var target = touch.target,
           startTouch = {},
           pointer = touchDevice.createPointer(),
+          // use this for differing event sequence
           nodeTouchListeners = Sync.cache(self)[TOUCH_LISTENERS_CACHE],
           fireTouchEvents = hasTouchListeners && flags.TOUCH_EVENTS,
           touchCanceled = fireTouchEvents &&
@@ -1163,10 +1205,6 @@
 
         // firefox properties are from prototype
         // and cannot be moved by Object.keys
-        /*for (var touchKey in touch) {
-          startTouch[touchKey] = touch[touchKey];
-        }*/
-
         extendDOMObject(startTouch, touch);
         pointer.buttons = 1;
 
@@ -1186,9 +1224,8 @@
         }),
         isPrimary = pointer.isPrimary,
         needFastClick = isPrimary && mayNeedFastClick,
-        needEnter = (!lastEnterTarget || !lastEnterTarget !== target),
+        needEnter = (!lastEnterTarget || lastEnterTarget !== target),
         computed = isPrimary && getComputedStyle(target),
-        parents,
         fireMouseEvents;
 
         var touchData = touchesMap[id] = {
@@ -1220,13 +1257,12 @@
           }
         };
 
-        touchData.stream = touchHelper.getStream(touchData);
+        touchData.stream = touchHelper.useStream(touchData);
+        fireMouseEvents = touchData.fireMouseEvents;
 
         /*if (!isPrimary) {
           touchDevice.primary.multitouch = true;
         }*/
-
-        fireMouseEvents = touchData.fireMouseEvents;
 
         if (touchCanceled) {
           e.preventDefault();
@@ -1236,17 +1272,20 @@
           // no more scroll
           // no more compatibility mouse events
 
-          console.log('cacled fast click by touch cancled');
+          console.log('canceled fast click by touchstart cancellation');
           needFastClick = false;
-          touchAction = false;
         } else if (isPrimary) {
-          parents = findScrollParent(target, computed);
+          updateDevicePrimary(touchData);
+        }
 
-          var touchAction = true,
+        if (!touchCanceled) {
+          var touchAction = touchActionBits['auto'],
+            mergeIterator = mergeTouchActionIterator(),
+            propagateUpToRoot,
             determinedAction,
             scrollables = [];
 
-          parents.forEach(function(parent) {
+          var ancestors = findScrollAncestors(target, computed, function(parent, isLast) {
             var element = parent.element;
 
             if (parent.scrollable) {
@@ -1257,24 +1296,41 @@
               var computed = parent.computed || getComputedStyle(element),
                 action = getTouchAction(handleContentTouchAction(computed.content));
 
-              if (action === touchActionBits['none']) {
-                touchAction = false;
+              action = mergeIterator(action);
+
+              if (action === touchActionBits['none'] || isLast) {
                 determinedAction = true;
               }
 
-              if (parent.scrollable) {
-                determinedAction = true;
+              if (!propagateUpToRoot && !determinedAction && parent.scrollable) {
+                if (!flags.PINCH_ZOOM_BEHAVIOR_PROPAGATION ||
+                  action <= touchActionBits['scroll']) {
+                  determinedAction = true;
+                } else {
+                  propagateUpToRoot = true;
+                }
+              }
+
+              if (determinedAction) {
+                if (!action) {
+                  debugger;
+                }
+
+                touchAction = action;
               }
             }
 
             // after first parent touchAction must be determined already
-            if (parent.scrollable && touchAction) {
+            if (parent.scrollable && determinedAction) {
               parent.scrollLeft = parent.element.scrollLeft;
               parent.scrollTop = parent.element.scrollTop;
             }
           });
 
-          if (touchAction) {
+          touchData.ancestors = ancestors;
+          console.log('touchAction:', touchAction);
+
+          if (touchAction > touchActionBits['none']) {
             scrollables.push({
               isWin: true,
               scrollLeft: window.pageXOffset,
@@ -1285,14 +1341,34 @@
             touchData.scrollables = scrollables;
           }
 
-          // !touchAction === noScroll
+          // should touch action be none when touch is canceler
+          // or touchAction assignment should be moved out of 'if statement'
+          // -> touchData.touchAction = touchAction || touchActionBits['auto'];
           touchData.touchAction = touchAction;
-          updateDevicePrimary(touchData);
+        }
+
+        if (isPrimary && !touchCanceled) {
+          var panX = touchAction === touchActionBits['pan-x'],
+            panY = touchAction === touchActionBits['pan-y'];
+
+          if (panX || panY) {
+            var len = scrollables.length,
+              scrollable;
+
+            for (; --len;) {
+              scrollable = scrollables[len];
+
+              if (!scrollable.isWin) {
+                (panX ? setOverflowHiddenY :
+                  setOverflowHiddenX)(scrollable.element);
+              }
+            }
+          }
         }
 
         if (!flags.IMMEDIATE_POINTER_LEAVE &&
             lastEnterTarget && !lastEnterTarget.contains(target)) {
-          // this block should be uncommented if leave event should be fired
+          // this block should execute if leave event should be fired
           // not from pointerup/pointercancel event, but from pointerdown
 
           pointer.dispatchEvent(lastEnterTarget, 'leave', getMouseDict(touch, {
@@ -1335,14 +1411,13 @@
 
           // compact mouseenter
           fireMouseEvents && dispatchMouseEvent('enter', target, enterDict);
-
           touchDevice.lastEnterTarget = target;
         }
 
         // pointerdown
-        var canceled = !pointer.dispatchEvent(target, 'down', downDict);
+        var pointerDownCanceled = !pointer.dispatchEvent(target, 'down', downDict);
 
-        if (canceled) {
+        if (pointerDownCanceled) {
           // canceled pointerdown should prevent default actions
           // e.g. selection or focus
           // canceled pointerdown should _not_ prevent click or scroll
@@ -1358,7 +1433,7 @@
         }
 
         // compact mousedown
-        if (fireMouseEvents && !canceled) {
+        if (fireMouseEvents && !pointerDownCanceled) {
           dispatchMouseEvent('down', target, downDict);
         }
 
@@ -1471,6 +1546,9 @@
         updateDevicePrimary();
       }
 
+      touchHelper.leaveStream(touchData);
+      // touchData.stream = null;
+
       pointer = touchData = null;
     },
     doHitTest = function(touch) {
@@ -1480,7 +1558,43 @@
 
       return target;
     },
-    mergeTouchAction /*= window.mergeTouchAction*/ = function(array) {
+    mergeTouchActionIterator = function() {
+      var result = 0,
+        scrollVal = touchActionBits['scroll'],
+        isFirst = true,
+        ended;
+
+      return function(action) {
+        if (ended || !action) return result;
+
+        if (isFirst) {
+          result = action;
+          isFirst = false;
+        } else if (action & scrollVal) {
+          if (result & scrollVal) {
+            result |= action;
+          }
+
+          if (result > scrollVal) {
+            result = action;
+          }
+        } else if (result > action) {
+          result = action;
+        }
+
+        if (result /* & */ === touchActionBits['none']) {
+          ended = true;
+        }
+
+        return result;
+
+        /*return {
+          value: result,
+          ended: ended
+        };*/
+      };
+    },
+    mergeTouchActionOld /*= window.mergeTouchAction*/ = function(array) {
       var result = array[0],
         scrollVal = (touchActionBits['pan-x'] | touchActionBits['pan-y']);
 
@@ -1504,7 +1618,17 @@
         }
       }
 
-      return result
+      return result;
+    },
+    mergeTouchAction = function(array) {
+      var action = 0,
+        iterator = mergeTouchActionIterator();
+
+      for (var i = 0, len = array.length; i < len; i++) {
+        action = iterator(array[i]);
+      }
+
+      return action;
     },
     handleContentTouchAction = function(content) {
       var action = content.replace(/^('|")([\s\S]*)(\1)$/, '$2').split(/\s*;\s*/).reduce(function(result, rule) {
@@ -1554,7 +1678,7 @@
       }, 0);
 
       if (propError) {
-        return 0;
+        return touchActionBits['auto'];
       }
 
       return action;
@@ -1593,17 +1717,83 @@
         slopSize = flags.TOUCHMOVE_SLOP_SIZE,
         movedOut = touchData.movedOut;
 
+      if (movedOut) {
+        return movedOut;
+      }
+
+      var dirX = startTouch.clientX - touch.clientX,
+        dirY = startTouch.clientY - touch.clientY,
+        absX = abs(dirX),
+        absY = abs(dirY);
+
       if (!movedOut && ((isAndroid && isFirstMove) ||
-          abs(startTouch.clientX - touch.clientX) >= slopSize ||
-          abs(startTouch.clientY - touch.clientY) >= slopSize)) {
+          absX >= slopSize || absY >= slopSize)
+      ) {
         movedOut = touchData.movedOut = true;
         touchData.needFastClick = false;
-        console.log('canceld fast click by check for move');
+        touchData.panAxis = absX > absY ? 'x' : 'y';
+        touchData.panDir = (absX > absY ? dirX : dirY) > 0 ? 1 : -1;
 
+        console.log('canceld fast click by check for move');
         logger.log('Pointer moved out of slop');
       }
 
       return movedOut;
+    },
+    preHandleTouchMove = function(e, type) {
+      var isFirstMove,
+        eTouches = e.touches,
+        touches = [],
+        touchActions = [],
+        touchAction,
+        movedOutData;
+
+      var i = 0,
+        len = eTouches.length,
+        touch,
+        touchData;
+
+      for (; i < len; i++) {
+        touch = eTouches[i];
+        touchData = touchesMap[touch.identifier];
+        
+        if (touchData) {
+          touches.push(touchData);
+          touchActions.push(touchData.touchAction);
+
+          if (checkForMovedOut(touchData, touch, !touchData.moved)) {
+            movedOutData = touchData;
+          }
+
+          if (isFirstMove !== false) {
+            isFirstMove = !touchData.moved;
+          }
+        }
+      }
+
+      // stream must always be when where is touches
+      // especially on first touch move
+      var stream = touchHelper.getStream();
+
+      if (isFirstMove) {
+        touchAction = mergeTouchAction(touchActions);
+        console.log('touchActions:', touchActions, 'touchAction:', touchAction);
+
+        var isZoom = stream.isZoom = (touches.length > 1 && viewport.scaleAllowed);
+
+        if (isZoom) {
+          stream.isGeastureDetermined = true;
+        }
+
+        if (isZoom && touchAction < touchActionBits['manipulation']) {
+          stream.isZoomPrevented = true;
+          e.preventDefault();
+        }
+      }
+
+      if (!stream.isZoom && movedOutData) {
+
+      }
     },
     handleTouchMove = function(touch, touchData, pointer, isPrimary, target, prevTarget) {
       var fireMouseEvents = touchData.fireMouseEvents,
@@ -1942,10 +2132,10 @@
       }
     },
     bindScrollFix = function(touchData) {
-      var stream = touchData.stream,
+      var stream = touchData && touchData.stream,
         scrollables;
 
-      if (isIOS || !touchData || stream.scrollClickFixed) return;
+      if (isIOS || !stream || stream.scrollClickFixed) return;
 
       scrollables = touchData.scrollables;
       stream.scrollClickFixed = true;
@@ -1996,7 +2186,6 @@
             } else {
               scrollHandler();
             }
-
           }, SCROLL_FIX_DELAY);
         };
 
@@ -2005,15 +2194,14 @@
       });
     },
     unbindScrollFix = function(touchData) {
-      var stream = touchData.stream,
+      var stream = touchData && touchData.stream,
         scrollables;
 
-      if (isIOS || !touchData || !stream.scrollClickFixed) return;
+      if (isIOS || !stream || !stream.scrollClickFixed) return;
+      console.log('unbind scroll:', stream);
 
       scrollables = touchData.scrollables;
       stream.scrollClickFixed = false;
-
-      console.log('unbind scroll:');
 
       scrollables.forEach(function(parent) {
         var element = parent.element,

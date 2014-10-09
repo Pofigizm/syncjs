@@ -705,7 +705,7 @@
       scaleAllowed: hasScale
     };
   }()),
-  mayNeedFastClick = (function() { return true;
+  mayNeedFastClick = (function() {
     if (viewport.meta) {
       // Chrome on Android with user-scalable="no" doesn't need FastClick (issue #89)
       // https://github.com/ftlabs/fastclick/issues/89

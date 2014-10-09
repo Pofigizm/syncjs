@@ -4103,8 +4103,14 @@ if (typeof WeakMap === 'undefined') {
       cssProps = {},
       data = Sync.cache(elem, TRANSITION_DATA_KEY),
       listeners = data.listeners || (data.listeners = []),
+      hasAnimation = data.hasAnimation,
       transition = new Transition(),
       params = transition.params;
+
+    if (hasAnimation) {
+      Transition.clean(elem, listeners);
+      Transition.stop(elem);
+    }
 
     Sync.each(props, function(val, key) {
       if (typeof val === 'number') {
@@ -4130,6 +4136,12 @@ if (typeof WeakMap === 'undefined') {
 
           if (index) {
             style.transition = transition;
+          }
+
+          if (key === 'transform' && value &&
+            typeof value === 'object' && !(value instanceof Transform)
+          ) {
+            value = new Transform(elem, value);
           }
 
           style[domKey] = value;
@@ -4171,8 +4183,6 @@ if (typeof WeakMap === 'undefined') {
             listeners.push(transitionListener);
 
             eventName.forEach(function(event) {
-              // elem.addEventListener(event, transitionListener, true);
-              console.log(cssKey, eventName, 'added');
               elem.addEventListener(event, transitionListener, true);
             });
           } else {
@@ -4193,6 +4203,7 @@ if (typeof WeakMap === 'undefined') {
           delete cssProps[cssKey];
 
           if (!--count) {
+            data.hasAnimation = false;
             Transition.clean(elem, listeners);
             globalCallback && globalCallback();
             style[transitionProperty] = '';
@@ -4231,6 +4242,7 @@ if (typeof WeakMap === 'undefined') {
 
     // console.log(transition + '');
 
+    data.hasAnimation = true;
     style.transition = transition;
   };
 

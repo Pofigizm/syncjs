@@ -1,0 +1,13 @@
+{
+  "distDir": "../dist",
+  "distName": "sync.js",
+  "sourceDir": "..",
+  "files": [
+    "es.js",
+    "core.js",
+    "dom.js",
+    "events.js",
+    "xhr.js",
+    "effects.js"
+  ]
+}

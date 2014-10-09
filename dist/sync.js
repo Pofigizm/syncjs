@@ -1489,12 +1489,12 @@ if (typeof WeakMap === 'undefined') {
           if (this.styleSheet) {
             return this.styleSheet.cssText;
           } else {
-            return Sync.dom.cache(this)[_styleSheetHTMLKey] || '';
+            return Sync.cache(this)[_styleSheetHTMLKey] || '';
           }
         },
         set: function(html) {
           if (!this.styleSheet) {
-            var cache = Sync.dom.cache(this),
+            var cache = Sync.cache(this),
               self = this,
               handler = function() {
                 if (self.readyState === 'loading' ||

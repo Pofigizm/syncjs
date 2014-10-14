@@ -554,9 +554,6 @@
         });
       };
 
-      store = this.store = {};
-      this.stack = stack;
-
       if (element && element.nodeType === Node.ELEMENT_NODE) {
         // need to real parse values
         // stack = this.stack = element.style.transform
@@ -567,11 +564,14 @@
           self = hasTrasform;
           applyMap();
           return hasTrasform;
+        } else if (!(this instanceof Transform)) {
+          self = Object.create(Transform.prototype);
+        } else {
+          self = this;
         }
 
-        this.element = element;
+        self.element = element;
 
-        self = this;
         element.style.transform.split(/\s+/).forEach(function(str) {
           var match = R_CSS_FN.exec(str);
 
@@ -586,14 +586,24 @@
         // stack = this.stack = [];
         map = element;
         element = null;
-        self = this;
+
+        if (!(this instanceof Transform)) {
+          self = Object.create(Transform.prototype);
+        } else {
+          self = this;
+        }
       }
+
+      store = self.store = {};
+      self.stack = stack;
 
       applyMap();
 
       if (element) {
-        Sync.cache(element)[TRANSFORM_CACHE_KEY] = this;
+        Sync.cache(element)[TRANSFORM_CACHE_KEY] = self;
       }
+
+      return self;
     };
 
     var transforms2d = [{
@@ -682,7 +692,8 @@
       var transform = function() {
         var args = slice.call(arguments, 0, len).map(function(arg) {
           return arg !== void 0 ?
-            parseFloat(arg) + TRANSFORM_MAP[key.toLowerCase()] : 0;
+            (isFinite(arg) ?
+              (parseFloat(arg) + TRANSFORM_MAP[key.toLowerCase()]) : arg) : 0;
         }),
         self = this instanceof Transform ? this : null;
 

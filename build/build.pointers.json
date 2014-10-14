@@ -1,12 +1,13 @@
 {
   "distDir": "../dist",
-  "distName": "sync.js",
+  "distName": "sync.pointers.js",
   "sourceDir": "../src",
   "files": [
     "es.js",
     "core.js",
     "dom.js",
     "events.js",
+    "pointer.js",
     "xhr.js",
     "effects.js",
     "window.js"

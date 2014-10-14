@@ -3,7 +3,9 @@
   "distName": "sync.pointers.js",
   "sourceDir": "../src",
   "files": [
-    "es.js",
+    "es/es5.js",
+    "es/es6.js",
+    "es/promises.js",
     "core.js",
     "dom.js",
     "events.js",

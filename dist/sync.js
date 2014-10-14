@@ -485,37 +485,44 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     })();
   }
 }());/*! Native Promise Only
-    v0.5.0-a (c) Kyle Simpson
+    v0.7.6-a (c) Kyle Simpson
     MIT License: http://getify.mit-license.org
 */
 
 (function UMD(name,context,definition){
   // special form of UMD for polyfilling across evironments
   context[name] = context[name] || definition();
-})("Promise",typeof global !== "undefined" ? global : this,function DEF(){
+})("Promise",typeof global != "undefined" ? global : this,function DEF(){
   /*jshint validthis:true */
   "use strict";
 
-  var sync_schedule = false, cycle, scheduling_queue,
-    timer = (typeof setImmediate !== "undefined") ?
+  var builtInProp, cycle, scheduling_queue,
+    ToString = Object.prototype.toString,
+    timer = (typeof setImmediate != "undefined") ?
       function timer(fn) { return setImmediate(fn); } :
-      setTimeout,
-    builtInProp = Object.defineProperty ?
-      function builtInProp(obj,name,val,config) {
-        return Object.defineProperty(obj,name,{
-          value: val,
-          writable: true,
-          configurable: config !== false
-        });
-      } :
-      function builtInProp(obj,name,val) {
-        obj[name] = val;
-        return obj;
-      }
+      setTimeout
   ;
 
+  // damnit, IE8.
+  try {
+    Object.defineProperty({},"x",{});
+    builtInProp = function builtInProp(obj,name,val,config) {
+      return Object.defineProperty(obj,name,{
+        value: val,
+        writable: true,
+        configurable: config !== false
+      });
+    };
+  }
+  catch (err) {
+    builtInProp = function builtInProp(obj,name,val) {
+      obj[name] = val;
+      return obj;
+    };
+  }
+
   // Note: using a queue instead of array for efficiency
-  function Queue() {
+  scheduling_queue = (function Queue() {
     var first, last, item;
 
     function Item(fn,self) {
@@ -538,7 +545,7 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       },
       drain: function drain() {
         var f = first;
-        first = last = cycle = null;
+        first = last = cycle = void 0;
 
         while (f) {
           f.fn.call(f.self);
@@ -546,68 +553,61 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
         }
       }
     };
-  }
-
-  scheduling_queue = Queue();
+  })();
 
   function schedule(fn,self) {
-    if (sync_schedule) {
-      sync_schedule = false;
-      fn.call(self);
-    }
-    else {
-      scheduling_queue.add(fn,self);
-      if (!cycle) {
-        cycle = timer(scheduling_queue.drain);
-      }
+    scheduling_queue.add(fn,self);
+    if (!cycle) {
+      cycle = timer(scheduling_queue.drain);
     }
   }
 
-  // promise duck typing?
+  // promise duck typing
   function isThenable(o) {
     var _then, o_type = typeof o;
 
-    if (o !== null &&
+    if (o != null &&
       (
-        o_type === "object" || o_type === "function"
+        o_type == "object" || o_type == "function"
       )
     ) {
       _then = o.then;
     }
-    return typeof _then === "function" ? _then : false;
+    return typeof _then == "function" ? _then : false;
   }
 
   function notify() {
-    var self = this, cb, chain, i;
-
-    if (self.state === 0) {
-      return sync_schedule = false;
+    for (var i=0; i<this.chain.length; i++) {
+      notifyIsolated(
+        this,
+        (this.state === 1) ? this.chain[i].success : this.chain[i].failure,
+        this.chain[i]
+      );
     }
-
-    for (i=0; i<self.chain.length; i++) {
-      chain = self.chain[i];
-      cb = (self.state === 1) ? chain.success : chain.failure;
-      notifyIsolated(self,cb,chain);
-    }
-    self.chain.length = 0;
+    this.chain.length = 0;
   }
 
+  // NOTE: This is a separate function to isolate
+  // the `try..catch` so that other code can be
+  // optimized better
   function notifyIsolated(self,cb,chain) {
     var ret, _then;
     try {
       if (cb === false) {
-        sync_schedule = true;
         chain.reject(self.msg);
       }
       else {
-        if (cb === true) ret = self.msg;
-        else ret = cb.call(void 0,self.msg);
+        if (cb === true) {
+          ret = self.msg;
+        }
+        else {
+          ret = cb.call(void 0,self.msg);
+        }
 
-        sync_schedule = true;
         if (ret === chain.promise) {
           chain.reject(TypeError("Promise-chain cycle"));
         }
-        else if ((_then = isThenable(ret))) {
+        else if (_then = isThenable(ret)) {
           _then.call(ret,chain.resolve,chain.reject);
         }
         else {
@@ -616,34 +616,25 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       }
     }
     catch (err) {
-      sync_schedule = true;
       chain.reject(err);
     }
   }
-  function checkYourself(self) {
+
+  function resolve(msg) {
+    var _then, def_wrapper, self = this;
+
+    // already triggered?
+    if (self.triggered) { return; }
+
+    self.triggered = true;
+
+    // unwrap
     if (self.def) {
-      if (self.triggered) {
-        return sync_schedule = false;
-      }
-      self.triggered = true;
       self = self.def;
     }
 
-    if (self.state !== 0) {
-      return sync_schedule = false;
-    }
-
-    return self;
-  }
-
-  function resolve(msg) {
-    var _then, def_wrapper, self = checkYourself(this);
-
-    // self-check failed
-    if (self === false) { return; }
-
     try {
-      if ((_then = isThenable(msg))) {
+      if (_then = isThenable(msg)) {
         def_wrapper = new MakeDefWrapper(self);
         _then.call(msg,
           function $resolve$(){ resolve.apply(def_wrapper,arguments); },
@@ -653,7 +644,9 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       else {
         self.msg = msg;
         self.state = 1;
-        schedule(notify,self);
+        if (self.chain.length > 0) {
+          schedule(notify,self);
+        }
       }
     }
     catch (err) {
@@ -662,19 +655,28 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
   }
 
   function reject(msg) {
-    var self = checkYourself(this);
+    var self = this;
 
-    // self-check failed
-    if (self === false) { return; }
+    // already triggered?
+    if (self.triggered) { return; }
+
+    self.triggered = true;
+
+    // unwrap
+    if (self.def) {
+      self = self.def;
+    }
 
     self.msg = msg;
     self.state = 2;
-    schedule(notify,self);
+    if (self.chain.length > 0) {
+      schedule(notify,self);
+    }
   }
 
   function iteratePromises(Constructor,arr,resolver,rejecter) {
     for (var idx=0; idx<arr.length; idx++) {
-      (function(idx){
+      (function IIFE(idx){
         Constructor.resolve(arr[idx])
         .then(
           function $resolver$(msg){
@@ -700,7 +702,7 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
   }
 
   function Promise(executor) {
-    if (typeof executor !== "function") {
+    if (typeof executor != "function") {
       throw TypeError("Not a function");
     }
 
@@ -712,18 +714,18 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     // to signal an already "initialized" promise
     this.__NPO__ = 1;
 
-    var self = this, def = new MakeDef(self);
+    var def = new MakeDef(this);
 
-    self.then = function then(success,failure) {
+    this["then"] = function then(success,failure) {
       var o = {
-        success: typeof success === "function" ? success : true,
-        failure: typeof failure === "function" ? failure : false
+        success: typeof success == "function" ? success : true,
+        failure: typeof failure == "function" ? failure : false
       };
       // Note: `then(..)` itself can be borrowed to be used against
       // a different promise constructor for making the chained promise,
       // by substituting a different `this` binding.
       o.promise = new this.constructor(function extractChain(resolve,reject) {
-        if (typeof (resolve && reject) !== "function") {
+        if (typeof resolve != "function" || typeof reject != "function") {
           throw TypeError("Not a function");
         }
 
@@ -732,32 +734,23 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       });
       def.chain.push(o);
 
-      schedule(notify,def);
+      if (def.state !== 0) {
+        schedule(notify,def);
+      }
 
       return o.promise;
     };
-    // `catch` not allowed as identifier in older JS engines
-    self["catch"] = function $catch$(failure) {
-      return def.promise.then.call(this,void 0,failure);
+    this["catch"] = function $catch$(failure) {
+      return this.then(void 0,failure);
     };
 
     try {
       executor.call(
         void 0,
         function publicResolve(msg){
-          if (def.triggered) {
-            return void(sync_schedule = false);
-          }
-          def.triggered = true;
-
           resolve.call(def,msg);
         },
         function publicReject(msg) {
-          if (def.triggered) {
-            return void(sync_schedule = false);
-          }
-          def.triggered = true;
-
           reject.call(def,msg);
         }
       );
@@ -786,25 +779,22 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
 
     // spec mandated checks
     // note: best "isPromise" check that's practical for now
-    if (typeof msg === "object" && "__NPO__" in msg) {
+    if (msg && typeof msg == "object" && msg.__NPO__ === 1) {
       return msg;
     }
 
     return new Constructor(function executor(resolve,reject){
-      if (typeof (resolve && reject) !== "function") {
+      if (typeof resolve != "function" || typeof reject != "function") {
         throw TypeError("Not a function");
       }
 
-      schedule(function immediateResolve(){
-        sync_schedule = true;
-        resolve(msg);
-      });
+      resolve(msg);
     });
   });
 
   builtInProp(Promise,"reject",function Promise$reject(msg) {
     return new this(function executor(resolve,reject){
-      if (typeof (resolve && reject) !== "function") {
+      if (typeof resolve != "function" || typeof reject != "function") {
         throw TypeError("Not a function");
       }
 
@@ -816,7 +806,7 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     var Constructor = this;
 
     // spec mandated checks
-    if (!Array.isArray(arr)) {
+    if (ToString.call(arr) != "[object Array]") {
       return Constructor.reject(TypeError("Not an array"));
     }
     if (arr.length === 0) {
@@ -824,7 +814,7 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     }
 
     return new Constructor(function executor(resolve,reject){
-      if (typeof (resolve && reject) !== "function") {
+      if (typeof resolve != "function" || typeof reject != "function") {
         throw TypeError("Not a function");
       }
 
@@ -843,12 +833,12 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     var Constructor = this;
 
     // spec mandated checks
-    if (!Array.isArray(arr)) {
+    if (ToString.call(arr) != "[object Array]") {
       return Constructor.reject(TypeError("Not an array"));
     }
 
     return new Constructor(function executor(resolve,reject){
-      if (typeof (resolve && reject) !== "function") {
+      if (typeof resolve != "function" || typeof reject != "function") {
         throw TypeError("Not a function");
       }
 

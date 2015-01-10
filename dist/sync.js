@@ -437,54 +437,60 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
   })
 }
 
-})();(function() {
-  "use strict";
+})();if (!Object.is) {
+  Object.is = function(v1, v2) {
+    if (v1 === 0 && v2 === 0) {
+      return 1 / v1 === 1 / v2;
+    }
+    if (v1 !== v1) {
+      return v2 !== v2;
+    }
+    return v1 === v2;
+  };
+}
 
-  if (typeof WeakMap === 'undefined') {
-    // need weak sets
-    (function() {
-    var defineProperty = Object.defineProperty;
-    var counter = Date.now() % 1e9;
+if (!Number.isNaN) {
+  Number.isNaN = function(target) {
+    return typeof target === 'number' && isNaN(target);
+  };
+}
 
-    var WeakMap = function() {
-      this.name = '__st' + (Math.random() * 1e9 >>> 0) + (counter++ + '__');
-    },
-    checkKey = function(key) {
-      if (!key || typeof key === 'string' ||
-      typeof key === 'number' || typeof key === 'boolean' ||
-      typeof key === 'regexp') {
-      throw new TypeError('value is not a non-null object');
-      }
-    },
-    wrap = function(fn) {
-      return function(key, val) {
-      checkKey(key);
-      return fn.call(this, key, val);
-      };
-    };
+if (!Number.isFinite) {
+  Number.isFinite = function(target) {
+    return typeof target === 'number' && isFinite(target);
+  };
+}(function() {
+  if (Object.assign) return;
 
-    WeakMap.prototype = {
-      set: wrap(function(key, value) {
-      var entry = key[this.name];
-      if (entry && entry[0] === key)
-        entry[1] = value;
-      else
-        defineProperty(key, this.name, {value: [key, value], writable: true});
-      }),
-      get: wrap(function(key) {
-      var entry;
-      return (entry = key[this.name]) && entry[0] === key ?
-        entry[1] : undefined;
-      }),
-      delete: wrap(function(key) {
-      this.set(key, undefined);
-      })
-    };
+  function ToObject(val) {
+    if (val == null) {
+      throw new TypeError('Object.assign cannot be called with null or undefined');
+    }
 
-    window.WeakMap = WeakMap;
-    })();
+    return Object(val);
   }
-}());/*! Native Promise Only
+
+  Object.assign = function (target, source) {
+    var from;
+    var keys;
+    var to = ToObject(target);
+
+    for (var s = 1; s < arguments.length; s++) {
+      from = arguments[s];
+      keys = Object.keys(Object(from));
+
+      for (var i = 0; i < keys.length; i++) {
+        to[keys[i]] = from[keys[i]];
+      }
+    }
+
+    return to;
+  };
+}());(function(d){function f(a,b){function e(a){if(!this||this.constructor!==e)return new e(a);this._keys=[];this._values=[];this.objectOnly=b;a&&s.call(this,a)}b||t(a,"size",{get:u});a.constructor=e;e.prototype=a;return e}function s(a){this.add?a.forEach(this.add,this):a.forEach(function(a){this.set(a[0],a[1])},this)}function g(a){this.has(a)&&(this._keys.splice(c,1),this._values.splice(c,1));return-1<c}function k(a){return this.has(a)?this._values[c]:void 0}function l(a,b){if(this.objectOnly&&b!==Object(b))throw new TypeError("Invalid value used as weak collection key");
+if(b!=b||0===b)for(c=a.length;c--&&!v(a[c],b););else c=a.indexOf(b);return-1<c}function m(a){return l.call(this,this._values,a)}function n(a){return l.call(this,this._keys,a)}function p(a,b){this.has(a)?this._values[c]=b:this._values[this._keys.push(a)-1]=b;return this}function q(a){this.has(a)||this._values.push(a);return this}function h(){this._values.length=0}function r(){return this._values.slice()}function w(){return this._keys.slice()}function u(){return this._values.length}function x(a,b){var e=
+this,c=e._values.slice();e._keys.slice().forEach(function(d,f){a.call(b,d,c[f],e)})}function y(a,b){var c=this;c._values.slice().forEach(function(d){a.call(b,d,d,c)})}var c,t=Object.defineProperty,v=Object.is;"undefined"==typeof WeakMap&&(d.WeakMap=f({"delete":g,clear:h,get:k,has:n,set:p},!0));"undefined"==typeof Map&&(d.Map=f({"delete":g,has:n,get:k,set:p,keys:w,values:r,forEach:x,clear:h}));"undefined"==typeof Set&&(d.Set=f({has:m,add:q,"delete":g,clear:h,values:r,forEach:y}));"undefined"==typeof WeakSet&&
+(d.WeakSet=f({"delete":g,add:q,clear:h,has:m},!0))})("undefined"!=typeof exports&&"undefined"!=typeof global?global:window);
+/*! Native Promise Only
     v0.7.6-a (c) Kyle Simpson
     MIT License: http://getify.mit-license.org
 */
@@ -849,10 +855,7 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
   });
 
   return Promise;
-});/* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
-
-;(function(window, undefined) {
+});;(function(window, undefined) {
   "use strict";
 
   var R_QUERY_SEARCH = /^([\w\d]*)(\[[\s\S]*\])$/;
@@ -891,9 +894,6 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       obj = obj && typeof obj.valueOf === 'function' && obj.valueOf() || obj;
       return obj != null && typeof obj === 'object';
     },
-    isStrict = function() {
-      return !this;
-    },
     isArray = Array.isArray,
     extend = Sync.extend = function(tmp) {
       var args = arguments,
@@ -921,7 +921,8 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
           if (!isArray(to[key]) && !isObject(to[key])) {
             if (isArray(value)) {
               to[key] = [];
-            } else if (value instanceof RegExp || typeof value === 'regexp') {
+            } else if (value instanceof RegExp) {
+              // copy RegExp
               to[key] = new RegExp(value);
             } else {
               to[key] = {};
@@ -929,8 +930,10 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
           }
 
           extend(recurse, to[key], value, overwrite);
-        } else if (typeof value !== 'undefined') {
-          !overwrite && key in to || (to[key] = value);
+        } else if (
+          typeof value !== 'undefined' && (overwrite || !hasOwn.call(to, key))
+        ) {
+          to[key] = value;
         }
       }
 
@@ -950,57 +953,57 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
   };
 
   var escape = function(key, val) {
-      if (isArray(val)) {
-        return val.map(function(deepVal, index) {
-          return escape(key + '[' + index + ']', deepVal);
-        }).join('&');
-      } else if (typeof val === 'object') {
-        return Object.keys(val).map(function(rest) {
-          return escape(key + '[' + rest + ']', this[rest]);
-        }, val).filter(function(val) {
-          return val;
-        }).join('&');
-      } else {
-        return key + '=' + encodeURIComponent(val);
-      }
-    },
-    equal = function(first, second, recursion) {
-      if (isArray(first)) {
-        return first.every(function(val, i) {
-          return recursion(val, second[i]);
-        });
-      } else if (typeof first === 'object' && first !== null) {
-        return Object.keys(first).every(function(val) {
-          return recursion(first[val], second[val]);
-        });
-      } else {
-        return first === second;
-      }
-    },
-    unescapePair = Sync.unescapePair = function(target, name, value) {
-      name = decodeURIComponent(name);
-      value = decodeURIComponent(value);
-      
-      var match = name.match(R_QUERY_SEARCH),
-        rest;
+    if (isArray(val)) {
+      return val.map(function(deepVal, index) {
+        return escape(key + '[' + index + ']', deepVal);
+      }).join('&');
+    } else if (typeof val === 'object') {
+      return Object.keys(val).map(function(rest) {
+        return escape(key + '[' + rest + ']', this[rest]);
+      }, val).filter(function(val) {
+        return val;
+      }).join('&');
+    } else {
+      return key + '=' + encodeURIComponent(val);
+    }
+  },
+  equal = function(first, second, recursion) {
+    if (isArray(first)) {
+      return first.every(function(val, i) {
+        return recursion(val, second[i]);
+      });
+    } else if (typeof first === 'object' && first !== null) {
+      return Object.keys(first).every(function(val) {
+        return recursion(first[val], second[val]);
+      });
+    } else {
+      return first === second;
+    }
+  },
+  unescapePair = Sync.unescapePair = function(target, name, value) {
+    name = decodeURIComponent(name);
+    value = decodeURIComponent(value);
+    
+    var match = name.match(R_QUERY_SEARCH),
+      rest;
 
-      if (match) {
-        name = match[1];
-        rest = (rest = match[2]).slice(1, rest.length - 1);
-        rest = rest.split('][').reduce(function(key, next) {
-          if (!(key in target)) {
-            target[key] = next ? {} : [];
-          }
+    if (match) {
+      name = match[1];
+      rest = (rest = match[2]).slice(1, rest.length - 1);
+      rest = rest.split('][').reduce(function(key, next) {
+        if (!(key in target)) {
+          target[key] = next ? {} : [];
+        }
 
-          target = target[key];
-          return next;
-        }, name);
+        target = target[key];
+        return next;
+      }, name);
 
-        target[rest] = value;
-      } else {
-        target[name] = value;
-      }
-    };
+      target[rest] = value;
+    } else {
+      target[name] = value;
+    }
+  };
 
   Sync.escape = function(obj) {
     return Object.keys(obj).map(function(key) {
@@ -1083,9 +1086,6 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
 
   Sync.logging = logging;
 }(this));
-/* -*- Mode: Java; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- /
-/* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
-
 ;(function(window, document, Sync, undefined) {
   "use strict";
 
@@ -1957,7 +1957,19 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
           before = params.before,
           inter = window[params.type || 'CustomEvent'];
 
-        event = new inter(event, params.options);
+        var instance;
+
+        // for Fx addons
+        try {
+          instance = new inter(event, params.options);
+        } catch (e) {
+          // e.name === 'NS_ERROR_FAILURE';
+          // e.result === 2147500037;
+          instance = new window.Event(event, params.options);
+          instance.detail = params.options.detail;
+        }
+
+        event = instance;
 
         if (typeof before === 'function') {
           before(event);
@@ -3033,14 +3045,10 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     makeWrap('response', function(_super) {
       return {
         get: function() {
-          try {
-            var type = this.responseType,
-              text = this.responseText;
-          } catch(e) {
-            debugger;
-          }
+          var type = this.responseType,
+            text = this.responseText;
 
-          return fixResponse(type, text, this);
+          return fixResponse(this.type2fix || type, text, this);
         }/*,
         enumerable: true,
         configurable: true*/
@@ -3072,7 +3080,10 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     try {
       xhr.responseType = 'text';
     } catch (e) {
-      xhr.open('GET', '/', true);
+      try {
+        xhr.open('GET', '/', true);
+      } catch (e) {}
+
       opened = true;
     }
 
@@ -3110,11 +3121,13 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
           set: function(val) {
             if (!hasOwn.call(responseTypes, val)) return;
 
-            _super.set(value = val);
+            try {
+              _super.set(value = val);
+            } catch (e) {};
 
             if (_super.get() !== val) {
-              // path response property here
-              
+              // patch response property here
+
               if (responseTypes[val]) {
                 this.type2fix = val;
                 _super.set('text');
@@ -3645,7 +3658,12 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       var proto = XMLHttpRequest.prototype,
         originalProto = OriginalXHR.prototype;
 
-      Object.keys(originalProto).forEach(handler, originalProto);
+      if (originalProto) {
+        Object.keys(originalProto).forEach(handler, originalProto);
+      } else {
+        ["open", "setRequestHeader", "send", "abort", "getResponseHeader", "getAllResponseHeaders", "overrideMimeType", "sendAsBinary", "onreadystatechange", "readyState", "timeout", "withCredentials", "upload", "responseURL", "status", "statusText", "responseType", "response", "responseText", "responseXML", "mozAnon", "mozSystem", "UNSENT", "OPENED", "HEADERS_RECEIVED", "LOADING", "DONE"].forEach(handler, xhr);
+      }
+
       Object.keys(xhr).forEach(handler, xhr);
 
       ["statusText", "status", "response", "responseType",
@@ -4134,7 +4152,9 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
             value = new Transform(elem, value);
           }
 
-          style[domKey] = value;
+          if (value != null) {
+            style[domKey] = value;
+          }
 
           // key
           // trans [value, duration, timing-function, delay, callback];
@@ -4300,17 +4320,7 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
         }
 
         self.element = element;
-
-        element.style.transform.split(/\s+/).forEach(function(str) {
-          var match = R_CSS_FN.exec(str);
-
-          if (match) {
-            var key = match[1],
-              val = match[2].split(/\s*,\s*/);
-
-            self[key].apply(self, val);
-          }
-        });
+        self.parseString(element.style.transform);
       } else {
         // stack = this.stack = [];
         map = element;
@@ -4460,6 +4470,21 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       return parseFloat(this.store[key].val[index | 0]);
     };
 
+    Transform.prototype.parseString = function(string) {
+      var self = this;
+
+      string.split(/\s+/).forEach(function(str) {
+        var match = R_CSS_FN.exec(str);
+
+        if (match) {
+          var key = match[1],
+            val = match[2].split(/\s*,\s*/);
+
+          self[key].apply(self, val);
+        }
+      });
+    };
+
     Transform.getMatrix = function(element) {
       var R_MATRIX_FN = /matrix(?:3d)?\(([\s\S]+?)\)/gi;
 
@@ -4501,6 +4526,10 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
       }, {});
 
       return new Transform(transform);
+    };
+
+    Transform.apply = function(element, map) {
+      return new Transform(element, map).apply();
     };
 
     Transform.prototype.addProperty = function(key, full, val) {
@@ -4601,8 +4630,6 @@ if (!hasOwn.call(Function.prototype, 'bind')) {
     var d = matrix[3];
     var e = matrix[4];
     var f = matrix[5];
-
-    console.log(matrix);
 
     var determinant = a * d - b * c;
 

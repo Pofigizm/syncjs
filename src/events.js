@@ -154,7 +154,19 @@
           before = params.before,
           inter = window[params.type || 'CustomEvent'];
 
-        event = new inter(event, params.options);
+        var instance;
+
+        // for Fx addons
+        try {
+          instance = new inter(event, params.options);
+        } catch (e) {
+          // e.name === 'NS_ERROR_FAILURE';
+          // e.result === 2147500037;
+          instance = new window.Event(event, params.options);
+          instance.detail = params.options.detail;
+        }
+
+        event = instance;
 
         if (typeof before === 'function') {
           before(event);

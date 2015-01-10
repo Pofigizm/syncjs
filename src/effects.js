@@ -405,7 +405,9 @@
             value = new Transform(elem, value);
           }
 
-          style[domKey] = value;
+          if (value != null) {
+            style[domKey] = value;
+          }
 
           // key
           // trans [value, duration, timing-function, delay, callback];
@@ -571,17 +573,7 @@
         }
 
         self.element = element;
-
-        element.style.transform.split(/\s+/).forEach(function(str) {
-          var match = R_CSS_FN.exec(str);
-
-          if (match) {
-            var key = match[1],
-              val = match[2].split(/\s*,\s*/);
-
-            self[key].apply(self, val);
-          }
-        });
+        self.parseString(element.style.transform);
       } else {
         // stack = this.stack = [];
         map = element;
@@ -731,6 +723,21 @@
       return parseFloat(this.store[key].val[index | 0]);
     };
 
+    Transform.prototype.parseString = function(string) {
+      var self = this;
+
+      string.split(/\s+/).forEach(function(str) {
+        var match = R_CSS_FN.exec(str);
+
+        if (match) {
+          var key = match[1],
+            val = match[2].split(/\s*,\s*/);
+
+          self[key].apply(self, val);
+        }
+      });
+    };
+
     Transform.getMatrix = function(element) {
       var R_MATRIX_FN = /matrix(?:3d)?\(([\s\S]+?)\)/gi;
 
@@ -772,6 +779,10 @@
       }, {});
 
       return new Transform(transform);
+    };
+
+    Transform.apply = function(element, map) {
+      return new Transform(element, map).apply();
     };
 
     Transform.prototype.addProperty = function(key, full, val) {
@@ -872,8 +883,6 @@
     var d = matrix[3];
     var e = matrix[4];
     var f = matrix[5];
-
-    console.log(matrix);
 
     var determinant = a * d - b * c;
 

@@ -155,14 +155,10 @@
     makeWrap('response', function(_super) {
       return {
         get: function() {
-          try {
-            var type = this.responseType,
-              text = this.responseText;
-          } catch(e) {
-            debugger;
-          }
+          var type = this.responseType,
+            text = this.responseText;
 
-          return fixResponse(type, text, this);
+          return fixResponse(this.type2fix || type, text, this);
         }/*,
         enumerable: true,
         configurable: true*/
@@ -194,7 +190,10 @@
     try {
       xhr.responseType = 'text';
     } catch (e) {
-      xhr.open('GET', '/', true);
+      try {
+        xhr.open('GET', '/', true);
+      } catch (e) {}
+
       opened = true;
     }
 
@@ -232,11 +231,13 @@
           set: function(val) {
             if (!hasOwn.call(responseTypes, val)) return;
 
-            _super.set(value = val);
+            try {
+              _super.set(value = val);
+            } catch (e) {};
 
             if (_super.get() !== val) {
-              // path response property here
-              
+              // patch response property here
+
               if (responseTypes[val]) {
                 this.type2fix = val;
                 _super.set('text');
@@ -767,7 +768,12 @@
       var proto = XMLHttpRequest.prototype,
         originalProto = OriginalXHR.prototype;
 
-      Object.keys(originalProto).forEach(handler, originalProto);
+      if (originalProto) {
+        Object.keys(originalProto).forEach(handler, originalProto);
+      } else {
+        ["open", "setRequestHeader", "send", "abort", "getResponseHeader", "getAllResponseHeaders", "overrideMimeType", "sendAsBinary", "onreadystatechange", "readyState", "timeout", "withCredentials", "upload", "responseURL", "status", "statusText", "responseType", "response", "responseText", "responseXML", "mozAnon", "mozSystem", "UNSENT", "OPENED", "HEADERS_RECEIVED", "LOADING", "DONE"].forEach(handler, xhr);
+      }
+
       Object.keys(xhr).forEach(handler, xhr);
 
       ["statusText", "status", "response", "responseType",

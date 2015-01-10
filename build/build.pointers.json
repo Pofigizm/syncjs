@@ -4,8 +4,12 @@
   "sourceDir": "../src",
   "files": [
     "es/es5.js",
-    "es/es6.js",
-    "es/promises.js",
+
+    "es/es6/basic.js",
+    "es/es6/object.assign.js",
+    "es/es6/es6-collections.js",
+    "es/es6/promises.js",
+
     "core.js",
     "dom.js",
     "events.js",

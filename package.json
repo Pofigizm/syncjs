@@ -1,8 +1,7 @@
 {
   "name": "syncjs",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "JavaScript middleware library which synchronizes API between browsers",
-  "main": "",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "clean": "rimraf dist",

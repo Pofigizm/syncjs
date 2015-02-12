@@ -5,7 +5,7 @@ JavaScript middleware library which synchronizes API between browsers
 
 Add to project:
     
-    npm install https://github.com/Pofigizm/syncjs.git --save
+    npm install git@github.com:Pofigizm/syncjs.git --save
 
 Rebuild:
 

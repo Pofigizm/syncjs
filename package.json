@@ -1,0 +1,22 @@
+{
+  "name": "syncjs",
+  "version": "0.0.0",
+  "description": "JavaScript middleware library which synchronizes API between browsers",
+  "main": "",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rimraf dist",
+    "build": "gulp build-dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/Pofigizm/syncjs.git"
+  },
+  "devDependencies": {
+    "gulp": "~3.8.11",
+    "gulp-concat": "~2.4.3",
+    "gulp-uglify": "~1.1.0",
+    "rimraf": "~2.2.8",
+    "gulp-rename": "~1.2.0"
+  }
+}

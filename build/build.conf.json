@@ -1,7 +1,7 @@
 {
-  "distDir": "../dist",
-  "distName": "sync.js",
-  "sourceDir": "../src",
+  "distDir": "./dist/",
+  "distName": "sync",
+  "sourceDir": "./src/",
   "files": [
     "es/es5.js",
 
